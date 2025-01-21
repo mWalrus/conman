@@ -6,8 +6,8 @@ pub(crate) const APPLICATION_NAME: &str = "conman";
 pub const DIRECTORIES: LazyLock<Directories> = LazyLock::new(|| Directories::new());
 
 pub struct Directories {
-    cache: PathBuf,
-    config: PathBuf,
+    pub cache: PathBuf,
+    pub config: PathBuf,
 }
 
 impl Directories {

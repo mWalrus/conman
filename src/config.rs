@@ -3,6 +3,8 @@ use std::{fmt::Debug, fs::File, io::Read};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::directories::DIRECTORIES;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     encryption: EncryptionConfig,
@@ -28,7 +30,7 @@ fn default_branch() -> String {
 
 impl Config {
     pub fn read() -> Result<Self> {
-        let config_file = crate::DIRECTORIES.config.join("config.toml");
+        let config_file = DIRECTORIES.config.join("config.toml");
 
         let mut config_file = File::open(config_file)?;
 
