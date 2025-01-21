@@ -18,7 +18,8 @@ pub struct EncryptionConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UpstreamConfig {
-    url: String, // will we have to validate this (git urls/http urls)?
+    url: String,
+    key: Option<String>,
     #[serde(default = "default_branch")]
     branch: String,
 }
