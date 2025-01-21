@@ -35,4 +35,3 @@ impl Directories {
         Self { cache, config }
     }
 }
-// 3. provide rw abstractions for each directory
