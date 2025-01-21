@@ -1,3 +1,8 @@
+use data::config::Config;
+
+mod data;
+
 fn main() {
-    println!("Hello, world!");
+    tracing_subscriber::fmt::init();
+    let config = Config::read().unwrap();
 }
