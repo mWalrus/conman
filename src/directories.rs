@@ -2,8 +2,6 @@ use std::{fs, path::PathBuf, sync::LazyLock};
 
 use directories::BaseDirs;
 
-pub mod config;
-
 pub(crate) const APPLICATION_NAME: &str = "conman";
 pub const DIRECTORIES: LazyLock<Directories> = LazyLock::new(|| Directories::new());
 
