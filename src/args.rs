@@ -5,11 +5,13 @@ use clap::{ArgAction, Parser, Subcommand};
 #[command(version, about, long_about = None)]
 pub struct Args {
     #[command(subcommand)]
-    command: Command,
+    pub command: Command,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    #[command(about = "clones the repository from upstream (does nothing if already cloned)")]
+    Init,
     #[command(about = "view the current upstream..local diff")]
     Diff {
         #[arg(short, long)]

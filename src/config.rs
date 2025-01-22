@@ -2,6 +2,7 @@ use std::{fmt::Debug, fs::File, io::Read, path::PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use url_parse::core::Parser;
 
 use crate::directories::DIRECTORIES;
 
@@ -61,5 +62,22 @@ impl Config {
                 "upstream ssh key path resolved",
             );
         }
+    }
+
+    pub fn upstream_url(&self) -> &str {
+        &self.upstream.url
+    }
+
+    pub fn ssh_key(&self) -> Option<&PathBuf> {
+        self.upstream.key_file.as_ref()
+    }
+
+    pub fn local_repo_path(&self) -> Result<PathBuf> {
+        let url = Parser::new(None).parse(&self.upstream.url)?;
+
+        let repo_name = url.path.unwrap().last().unwrap().clone();
+        let repo_path = DIRECTORIES.cache.join(repo_name);
+
+        Ok(repo_path)
     }
 }
