@@ -7,6 +7,7 @@ pub const DIRECTORIES: LazyLock<Directories> = LazyLock::new(|| Directories::new
 
 pub struct Directories {
     pub cache: PathBuf,
+    pub ssh: PathBuf,
     pub config: PathBuf,
 }
 
@@ -30,6 +31,8 @@ impl Directories {
             tracing::trace!("created $HOME/.config/{APPLICATION_NAME}");
         }
 
-        Self { cache, config }
+        let ssh = base_dirs.home_dir().join(".ssh");
+
+        Self { cache, config, ssh }
     }
 }
