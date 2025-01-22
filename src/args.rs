@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
@@ -21,7 +21,7 @@ pub enum Command {
     Edit {
         #[arg(help = "relative or absolute path to file")]
         path: PathBuf,
-        #[arg(short, long, help = "don't save on exit")]
+        #[arg(short, long, help = "don't save on exit", required = false)]
         dont_save: bool,
     },
     #[command(about = "save any unsaved changes")] // gather all files + commit
@@ -34,7 +34,12 @@ pub enum Command {
     Add {
         #[arg(help = "relative or absolute path to file")]
         path: PathBuf,
-        #[arg(help = "flags this file as to be encrypted")]
+        #[arg(
+            short,
+            long,
+            help = "flags this file as to be encrypted",
+            required = false
+        )]
         encrypt: bool,
     },
 }
