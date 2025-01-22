@@ -1,11 +1,10 @@
-use anyhow::Result;
-use git2::{build::RepoBuilder, Cred, ErrorCode, FetchOptions, RemoteCallbacks, Repository};
-use tracing::trace_span;
+use std::{fs::File, io::Write, path::PathBuf};
 
-use crate::{
-    config::Config,
-    directories::{APPLICATION_NAME, DIRECTORIES},
-};
+use age::secrecy::SecretString;
+use anyhow::Result;
+use git2::{build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository};
+
+use crate::config::Config;
 
 pub struct Repo(Repository);
 
@@ -58,6 +57,50 @@ impl Repo {
         tracing::trace!(url = url, "attempting to clone from upstream");
         let _ = builder.clone(&url, &repo_path)?;
         tracing::trace!(url = url, "cloned repo from upstream");
+
+        Ok(())
+    }
+
+    /// Add a file from your local system to be managed by conman
+    pub fn add(&self, config: &Config, source: PathBuf, encrypt: bool) -> Result<()> {
+        // TODO: early return if the file is already added
+        //       also report to the user that the file already is managed by conman
+        let source_path = std::fs::canonicalize(source)?;
+        let local_repo_path = config.local_repo_path()?;
+
+        let file_name = source_path.file_name().unwrap();
+        let destination_path = local_repo_path.join(file_name);
+
+        // simply copy the contents of the source file to the destination
+        // if no encryption is needed
+        if !encrypt {
+            tracing::trace!(source=?source_path, destination=?destination_path,"no encryption selected, performing simple file copy");
+            std::fs::copy(source_path, destination_path)?;
+            return Ok(());
+        }
+
+        tracing::trace!("preparing file encryption");
+
+        let mut reader = File::open(&source_path)?;
+        let mut file_contents: Vec<u8> = vec![];
+
+        // copy the file contents to the above buffer
+        std::io::copy(&mut reader, &mut file_contents)?;
+
+        // initialize the encryptor
+        let passphrase = SecretString::from(config.encryption_passphrase());
+        let encryptor = age::Encryptor::with_user_passphrase(passphrase);
+
+        // prepare the destination file
+        let mut destination_file = File::create(&destination_path)?;
+
+        tracing::trace!("encrypting");
+        // write encrypted file contents to the destination file
+        let mut writer = encryptor.wrap_output(&mut destination_file)?;
+        writer.write_all(&file_contents)?;
+        writer.finish()?;
+
+        tracing::trace!(source=?source_path, destination=?destination_path, "copied and encrypted file contents");
 
         Ok(())
     }

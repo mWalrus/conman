@@ -15,32 +15,31 @@ fn main() {
 
     let config = Config::read().unwrap();
 
+    tracing::trace!(command = ?args.command, "running command");
+
     match args.command {
         Command::Init => {
-            tracing::trace!(command = "init", "running command");
             Repo::clone(&config).unwrap();
         }
         Command::Diff { no_color } => {
-            tracing::trace!(command = "diff", "running command");
             let repo = Repo::open(&config).unwrap();
         }
-        Command::Status => {
-            tracing::trace!(command = "status", "running command");
-        }
-        Command::Edit { path, dont_save } => {
-            tracing::trace!(command = "edit", "running command");
-        }
-        Command::Save => {
-            tracing::trace!(command = "save", "running command");
-        }
-        Command::Push => {
-            tracing::trace!(command = "push", "running command");
-        }
-        Command::Pull => {
-            tracing::trace!(command = "pull", "running command");
-        }
+        Command::Status => {}
+        Command::Edit { path, dont_save } => {}
+        Command::Save => {}
+        Command::Push => {}
+        Command::Pull => {}
         Command::Add { path, encrypt } => {
-            tracing::trace!(command = "add", "running command");
+            let repo = Repo::open(&config).unwrap();
+            // TODO: add a discard command to discard unsaved changes
+
+            // NOTES:
+            // - when adding a file we will support both relative and absolute paths
+            // - the user has to have permission to edit files at said path
+            // - a specified path will be copied to the local conman repository
+            // - directories are not supported, just add files one by one
+
+            repo.add(&config, path, encrypt).unwrap();
         }
     }
 }

@@ -6,6 +6,8 @@ use url_parse::core::Parser;
 
 use crate::directories::DIRECTORIES;
 
+// FIXME: make all members public and stop providing getters
+//        unless they are constructing data for convenience
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     encryption: EncryptionConfig,
@@ -70,6 +72,10 @@ impl Config {
 
     pub fn ssh_key(&self) -> Option<&PathBuf> {
         self.upstream.key_file.as_ref()
+    }
+
+    pub fn encryption_passphrase(&self) -> String {
+        self.encryption.passphrase.clone()
     }
 
     pub fn local_repo_path(&self) -> Result<PathBuf> {
