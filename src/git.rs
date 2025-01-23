@@ -1,12 +1,21 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use git2::{build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository};
+use git2::{
+    build::{CheckoutBuilder, RepoBuilder},
+    Cred, FetchOptions, RemoteCallbacks, Repository,
+};
 
 use crate::{file::FileManager, state::STATE};
 
-pub struct Repo(Repository);
+pub struct Repo {
+    inner: Repository,
+    refname: String,
+}
 
+// TODO:
+// 1. we need to inform the user if the specified branch doesn't exist upstream
+//    and let them create the branch locally
 impl Repo {
     pub fn open() -> Result<Self> {
         let repo_path = &*STATE.paths.repo;
@@ -15,7 +24,79 @@ impl Repo {
         let repo = Repository::open(&repo_path).unwrap();
         tracing::trace!(path=?repo_path, "opened repo");
 
-        Ok(Self(repo))
+        let refname = format!("refs/heads/{}", STATE.config.upstream.branch);
+
+        let repo = Self {
+            inner: repo,
+            refname,
+        };
+
+        repo.update_head()?;
+
+        Ok(repo)
+    }
+
+    fn update_head(&self) -> Result<()> {
+        let span = tracing::trace_span!("update_head");
+        let _enter = span.enter();
+
+        match self.inner.find_reference(&self.refname) {
+            Ok(reference) => {
+                let name = match reference.name() {
+                    Some(name) => name.to_string(),
+                    None => String::from_utf8_lossy(reference.name_bytes()).to_string(),
+                };
+
+                tracing::trace!(
+                    refname = self.refname,
+                    resolved_name = name,
+                    "found reference with name"
+                );
+
+                self.inner.set_head(&name)?;
+                tracing::trace!("set head to {name}");
+                self.inner
+                    .checkout_head(Some(CheckoutBuilder::default().force()))?;
+                tracing::trace!("checked out new head");
+            }
+            Err(_) => {
+                let head = self.inner.head()?;
+                let head_commit = self.inner.reference_to_annotated_commit(&head)?;
+                tracing::trace!(id=?head_commit.id(), "found head commit");
+                self.inner.reference(
+                    &self.refname,
+                    head_commit.id(),
+                    true,
+                    &format!(
+                        "setting {} to {}",
+                        STATE.config.upstream.branch,
+                        head_commit.id()
+                    ),
+                )?;
+                tracing::trace!("set ref to point to head commit");
+                self.inner.set_head(&self.refname)?;
+                tracing::trace!("set head to {}", self.refname);
+                self.inner.checkout_head(Some(
+                    CheckoutBuilder::default()
+                        .allow_conflicts(true)
+                        .conflict_style_merge(true)
+                        .force(),
+                ))?;
+                tracing::trace!("checked out new head");
+            }
+        };
+
+        let branch_name = &STATE.config.upstream.branch;
+        let mut branch = self
+            .inner
+            .find_branch(branch_name, git2::BranchType::Local)?;
+
+        if let Err(_) = branch.upstream() {
+            branch.set_upstream(Some(branch_name))?;
+            tracing::trace!("set upstream for branch '{branch_name}' to 'origin/{branch_name}'");
+        }
+
+        Ok(())
     }
 
     fn make_initial_commit(repo: &Repository) -> Result<()> {
@@ -122,7 +203,7 @@ impl Repo {
 
     pub fn save(&mut self) -> Result<()> {
         // FIXME: implement branch support
-        let mut index = self.0.index()?;
+        let mut index = self.inner.index()?;
 
         index.add_all(&["."], git2::IndexAddOption::DEFAULT, None)?;
         tracing::trace!("staged all files");
@@ -147,17 +228,17 @@ impl Repo {
         // tracing::trace!(parent_commit=?parent_commit.id(), "found parent commit");
 
         let oid = index.write_tree()?;
-        let signature = self.0.signature()?;
-        let tree = self.0.find_tree(oid)?;
+        let signature = self.inner.signature()?;
+        let tree = self.inner.find_tree(oid)?;
 
-        let parent_commit = self.0.head()?.peel_to_commit()?;
+        let parent_commit = self.inner.head()?.peel_to_commit()?;
 
-        let head_reference = self.0.find_reference("HEAD")?;
+        let head_reference = self.inner.find_reference("HEAD")?;
         let reference = head_reference.symbolic_target();
 
         tracing::trace!(tree=?tree, "preparing commit");
 
-        let commit_oid = self.0.commit(
+        let commit_oid = self.inner.commit(
             reference,
             &signature,
             &signature,
