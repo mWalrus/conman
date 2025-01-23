@@ -35,8 +35,7 @@ fn main() {
             Repo::open().unwrap().remove(path).unwrap();
         }
         Command::List => {
-            let repo = Repo::open().unwrap();
-            repo.list().unwrap();
+            Repo::open().unwrap().list().unwrap();
         }
     }
 }
