@@ -44,4 +44,6 @@ pub enum Command {
         )]
         encrypt: bool,
     },
+    #[command(about = "list all managed files")]
+    List,
 }

@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     fs::File,
     io::{Read, Write},
     path::PathBuf,
@@ -14,6 +15,16 @@ use crate::{config::Config, directories::DIRECTORIES};
 pub struct FileMetadata {
     path: PathBuf,
     encrypted: bool,
+}
+
+impl Display for FileMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "File:\n\tpath: {:?}\n\tencrypted: {}",
+            self.path, self.encrypted
+        )
+    }
 }
 
 pub struct FileManager {
@@ -133,5 +144,9 @@ impl FileManager {
         tracing::trace!(path=?metadata_path, "wrote metadata to disk");
 
         Ok(())
+    }
+
+    pub fn metadata(&self) -> &Vec<FileMetadata> {
+        &self.metadata.metadata
     }
 }

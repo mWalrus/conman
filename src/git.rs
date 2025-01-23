@@ -3,7 +3,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use git2::{build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository};
 
-use crate::{config::Config, directories::DIRECTORIES, file::FileManager};
+use crate::{
+    config::Config,
+    directories::DIRECTORIES,
+    file::{FileManager, FileMetadata},
+};
 
 pub struct Repo(Repository);
 
@@ -80,6 +84,15 @@ impl Repo {
 
         file_manager.copy(config, &source_path, &destination_path, encrypt)?;
 
+        Ok(())
+    }
+
+    pub fn list(&self, config: &Config) -> Result<()> {
+        let file_manager = FileManager::new(config)?;
+        let metadata = file_manager.metadata();
+        for file in metadata.iter() {
+            println!("{file}");
+        }
         Ok(())
     }
 }
