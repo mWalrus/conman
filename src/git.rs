@@ -18,22 +18,30 @@ pub struct Repo {
 //    and let them create the branch locally
 impl Repo {
     pub fn open() -> Result<Self> {
+        let span = tracing::trace_span!("open");
+        let _enter = span.enter();
+
         let repo_path = &*STATE.paths.repo;
 
         tracing::trace!(path=?repo_path, "attempting to open repo");
         let repo = Repository::open(&repo_path).unwrap();
         tracing::trace!(path=?repo_path, "opened repo");
 
-        let refname = format!("refs/heads/{}", STATE.config.upstream.branch);
-
-        let repo = Self {
-            inner: repo,
-            refname,
-        };
+        let repo = Self::new_internal(repo);
 
         repo.update_head()?;
 
         Ok(repo)
+    }
+
+    fn new_internal(repo: Repository) -> Self {
+        let refname = format!("refs/heads/{}", STATE.config.upstream.branch);
+        tracing::trace!("refname set to {refname}");
+
+        Self {
+            inner: repo,
+            refname,
+        }
     }
 
     fn update_head(&self) -> Result<()> {
@@ -60,8 +68,10 @@ impl Repo {
                 tracing::trace!("checked out new head");
             }
             Err(_) => {
-                let head = self.inner.head()?;
-                let head_commit = self.inner.reference_to_annotated_commit(&head)?;
+                // FIXME: early return if the head is already set to self.refname?
+                let head = self.inner.find_reference("HEAD")?;
+                let head_commit = head.peel_to_commit()?;
+
                 tracing::trace!(id=?head_commit.id(), "found head commit");
                 self.inner.reference(
                     &self.refname,
@@ -86,7 +96,15 @@ impl Repo {
             }
         };
 
-        let branch_name = &STATE.config.upstream.branch;
+        self.set_upstream(&STATE.config.upstream.branch)?;
+
+        Ok(())
+    }
+
+    fn set_upstream(&self, branch_name: &str) -> Result<()> {
+        let span = tracing::trace_span!("set_upstream");
+        let _enter = span.enter();
+
         let mut branch = self
             .inner
             .find_branch(branch_name, git2::BranchType::Local)?;
@@ -99,16 +117,16 @@ impl Repo {
         Ok(())
     }
 
-    fn make_initial_commit(repo: &Repository) -> Result<()> {
-        let reference = repo.find_reference("HEAD")?;
+    fn make_initial_commit(&self) -> Result<()> {
+        let reference = self.inner.find_reference("HEAD")?;
         let reference = reference.symbolic_target();
         tracing::trace!(ref=?reference, "found reference to HEAD");
 
-        let signature = repo.signature()?;
-        let oid = repo.index()?.write_tree()?;
-        let tree = repo.find_tree(oid)?;
+        let signature = self.inner.signature()?;
+        let oid = self.inner.index()?.write_tree()?;
+        let tree = self.inner.find_tree(oid)?;
 
-        repo.commit(
+        self.inner.commit(
             reference,
             &signature,
             &signature,
@@ -116,23 +134,17 @@ impl Repo {
             &tree,
             &[],
         )?;
-        repo.index()?.write()?;
+
+        self.inner.index()?.write()?;
+
         Ok(())
     }
 
-    pub fn clone() -> Result<()> {
-        // do nothing if we can successfully open the repo on disk since we
-        // don't have to clone if that's the case
-        let repo_path = &*STATE.paths.repo;
-
-        if let Ok(true) = std::fs::exists(&repo_path) {
-            tracing::trace!("repo path already exists");
-            return Ok(());
-        }
-
+    fn remote_callbacks<'cb>() -> RemoteCallbacks<'cb> {
         let mut callbacks = RemoteCallbacks::new();
         callbacks.credentials(|_url, username_from_url, _allowed_types| {
-            tracing::trace!("fetching credentials to use for clone from upstream");
+            let span = tracing::trace_span!("remote_callbacks");
+            let _enter = span.enter();
             let username = username_from_url.unwrap();
 
             if let Some(key) = STATE.config.upstream.key_file.as_ref() {
@@ -147,9 +159,23 @@ impl Repo {
                 Cred::username(username)
             }
         });
+        callbacks
+    }
+
+    pub fn clone() -> Result<()> {
+        // do nothing if we can successfully open the repo on disk since we
+        // don't have to clone if that's the case
+        let repo_path = &*STATE.paths.repo;
+
+        if let Ok(true) = std::fs::exists(&repo_path) {
+            tracing::trace!("repo path already exists");
+            return Ok(());
+        }
+
+        let remote_callbacks = Self::remote_callbacks();
 
         let mut fetch_options = FetchOptions::new();
-        fetch_options.remote_callbacks(callbacks);
+        fetch_options.remote_callbacks(remote_callbacks);
 
         let mut builder = RepoBuilder::new();
         builder.fetch_options(fetch_options);
@@ -160,12 +186,34 @@ impl Repo {
         let repo = builder.clone(url, &repo_path)?;
         tracing::trace!(url = url, "cloned repo from upstream");
 
-        if repo.is_empty()? {
-            Self::make_initial_commit(&repo)?;
+        let repo_is_empty = repo.is_empty()?;
+
+        let repo = Self::new_internal(repo);
+
+        if repo_is_empty {
+            repo.make_initial_commit()?;
         }
+
+        // TODO:
+        // repo.find_remote_branch()?;
+
+        repo.set_upstream("main")?;
+
+        repo.update_head()?;
 
         Ok(())
     }
+
+    // FIXME: we want to be able to discover the remote's branch name in order to set the upstream
+    // fn find_remote_branch(&self) -> Result<()> {
+    //     let mut remote = self.inner.find_remote("origin")?;
+    //     let connection =
+    //         remote.connect_auth(git2::Direction::Fetch, Some(Self::remote_callbacks()), None)?;
+    //     let remote_branch = connection.default_branch()?;
+    //     let branch = remote_branch.as_str().unwrap();
+    //     println!("found remote branch for origin: {branch}");
+    //     Ok(())
+    // }
 
     /// Add a file from your local system to be managed by conman
     pub fn add(&self, source: PathBuf, encrypt: bool) -> Result<()> {
@@ -231,13 +279,15 @@ impl Repo {
         let signature = self.inner.signature()?;
         let tree = self.inner.find_tree(oid)?;
 
-        let parent_commit = self.inner.head()?.peel_to_commit()?;
+        let head = self.inner.find_reference("HEAD")?;
 
-        let head_reference = self.inner.find_reference("HEAD")?;
-        let reference = head_reference.symbolic_target();
+        let parent_commit = head.peel_to_commit()?;
+
+        let reference = head.symbolic_target();
 
         tracing::trace!(tree=?tree, "preparing commit");
 
+        // FIXME: construct a more descriptive commit message
         let commit_oid = self.inner.commit(
             reference,
             &signature,
