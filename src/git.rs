@@ -46,6 +46,16 @@ impl Repo {
     fn update_head(&self) -> Result<()> {
         let _span = tracing::trace_span!("update_head").entered();
 
+        let head = self.inner.find_reference("HEAD")?;
+        if head
+            .symbolic_target()
+            .map(|r| r.eq(&self.refname))
+            .unwrap_or(false)
+        {
+            tracing::trace!("HEAD already set to {}, skipping updating", self.refname);
+            return Ok(());
+        }
+
         match self.inner.find_reference(&self.refname) {
             Ok(reference) => {
                 let name = match reference.name() {
@@ -66,8 +76,6 @@ impl Repo {
                 tracing::trace!("checked out new head");
             }
             Err(_) => {
-                // FIXME: early return if the head is already set to self.refname?
-                let head = self.inner.find_reference("HEAD")?;
                 let head_commit = head.peel_to_commit()?;
 
                 tracing::trace!(id=?head_commit.id(), "found head commit");
