@@ -1,30 +1,29 @@
-use std::{fmt::Debug, fs::File, io::Read, path::PathBuf};
-
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use url_parse::core::Parser;
+use std::{fmt::Debug, fs::File, io::Read, path::PathBuf, sync::LazyLock};
 
 use crate::directories::DIRECTORIES;
+use anyhow::Result;
+use serde::{Deserialize, Deserializer, Serialize};
 
-// FIXME: make all members public and stop providing getters
-//        unless they are constructing data for convenience
+pub(crate) const CONFIG: LazyLock<Config> = LazyLock::new(|| Config::read().unwrap());
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
-    encryption: EncryptionConfig,
-    upstream: UpstreamConfig,
+    pub encryption: EncryptionConfig,
+    pub upstream: UpstreamConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct EncryptionConfig {
-    passphrase: String, // we will use this together with `age` for file encryption
+    pub passphrase: String, // we will use this together with `age` for file encryption
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UpstreamConfig {
-    url: String,
-    key_file: Option<PathBuf>,
+    pub url: String,
+    #[serde(deserialize_with = "path_resolver")]
+    pub key_file: Option<PathBuf>,
     #[serde(default = "default_branch")]
-    branch: String,
+    pub branch: String,
 }
 
 fn default_branch() -> String {
@@ -33,57 +32,41 @@ fn default_branch() -> String {
 
 impl Config {
     pub fn read() -> Result<Self> {
-        let config_file = DIRECTORIES.config.join("config.toml");
-
+        let config_file = DIRECTORIES.config_path();
         let mut config_file = File::open(config_file)?;
 
         let mut contents = String::new();
         config_file.read_to_string(&mut contents)?;
 
-        let mut config: Config = toml::de::from_str(&contents)?;
-
-        config.resolve_ssh_key_file();
+        let config: Config = toml::de::from_str(&contents)?;
 
         tracing::trace!("read config");
         Ok(config)
     }
+}
 
-    fn resolve_ssh_key_file(&mut self) {
-        if let Some(key_file_path) = self.upstream.key_file.take() {
-            let resolved_path = if key_file_path.is_relative() {
-                Some(DIRECTORIES.ssh.join(key_file_path))
-            } else if key_file_path.is_absolute() {
-                Some(key_file_path)
-            } else {
-                None
-            };
-            self.upstream.key_file = resolved_path;
+fn path_resolver<'de, D>(de: D) -> Result<Option<PathBuf>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let maybe_path: Option<PathBuf> = Option::deserialize(de)?;
+    let Some(unresolved_path) = maybe_path else {
+        tracing::trace!("no ssh key file path specified");
+        return Ok(None);
+    };
 
-            tracing::trace!(
-                path = ?self.upstream.key_file,
-                "upstream ssh key path resolved",
-            );
-        }
-    }
+    tracing::trace!(unresolved_path=?unresolved_path, "got key file path");
 
-    pub fn upstream_url(&self) -> &str {
-        &self.upstream.url
-    }
+    let Some(unresolved_path_as_str) = unresolved_path.to_str() else {
+        tracing::warn!("unresolved path could not be converted to str");
+        return Ok(None);
+    };
 
-    pub fn ssh_key(&self) -> Option<&PathBuf> {
-        self.upstream.key_file.as_ref()
-    }
+    let expanded_path = shellexpand::tilde(unresolved_path_as_str);
+    tracing::trace!(expanded_path = ?expanded_path, "expanded key file path");
 
-    pub fn encryption_passphrase(&self) -> String {
-        self.encryption.passphrase.clone()
-    }
+    let resolved_path = std::fs::canonicalize(expanded_path.into_owned()).unwrap();
+    tracing::trace!(path=?resolved_path, "resolved ssh key file path");
 
-    pub fn local_repo_path(&self) -> Result<PathBuf> {
-        let url = Parser::new(None).parse(&self.upstream.url)?;
-
-        let repo_name = url.path.unwrap().last().unwrap().clone();
-        let repo_path = DIRECTORIES.cache.join(repo_name);
-
-        Ok(repo_path)
-    }
+    Ok(Some(resolved_path))
 }

@@ -1,13 +1,16 @@
 use std::{fs, path::PathBuf, sync::LazyLock};
 
+use anyhow::Result;
 use directories::BaseDirs;
+use url_parse::core::Parser;
+
+use crate::config::CONFIG;
 
 pub(crate) const APPLICATION_NAME: &str = "conman";
 pub const DIRECTORIES: LazyLock<Directories> = LazyLock::new(|| Directories::new());
 
 pub struct Directories {
     pub cache: PathBuf,
-    pub ssh: PathBuf,
     pub config: PathBuf,
 }
 
@@ -31,8 +34,25 @@ impl Directories {
             tracing::trace!("created $HOME/.config/{APPLICATION_NAME}");
         }
 
-        let ssh = base_dirs.home_dir().join(".ssh");
+        Self { cache, config }
+    }
 
-        Self { cache, config, ssh }
+    pub fn local_repo_path(&self) -> Result<PathBuf> {
+        let url = Parser::new(None).parse(&CONFIG.upstream.url)?;
+
+        let repo_name = url.path.unwrap().last().unwrap().clone();
+        let repo_path = self.cache.join(repo_name);
+
+        Ok(repo_path)
+    }
+
+    pub fn file_metadata_path(&self) -> Result<PathBuf> {
+        let local_repo_path = self.local_repo_path()?;
+        let file_metadata_path = local_repo_path.join("metadata.toml");
+        Ok(file_metadata_path)
+    }
+
+    pub fn config_path(&self) -> PathBuf {
+        self.config.join("config.toml")
     }
 }
