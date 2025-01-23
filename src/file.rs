@@ -43,6 +43,8 @@ struct Metadata {
 //            - /home/wally/path/to/some/config.toml -> /home/<user>/path/to/some/config.toml
 impl FileManager {
     pub fn new() -> Result<Self> {
+        let _span = tracing::trace_span!("new").entered();
+
         let metadata_path = &STATE.paths.metadata;
 
         let metadata = match File::open(&metadata_path) {
@@ -104,6 +106,7 @@ impl FileManager {
 
     /// perform a simple copy of the file at source into the local conman git repo
     fn copy_unencrypted(&self, from: &PathBuf, to: &PathBuf) -> Result<()> {
+        let _span = tracing::trace_span!("copy_unencrypted").entered();
         tracing::trace!(source=?from, destination=?to,"no encryption selected, performing simple file copy");
         std::fs::copy(from, to)?;
         tracing::trace!(source=?from, destination=?to,"copied file contents");
@@ -112,6 +115,8 @@ impl FileManager {
 
     /// perform an encrypted copy of the file at source into the local conman git repo
     fn copy_encrypted(&self, encryptor: Encryptor, from: &PathBuf, to: &PathBuf) -> Result<()> {
+        let _span = tracing::trace_span!("copy_encrypted").entered();
+
         tracing::trace!(source=?from, "preparing file copy with encryption");
 
         let mut reader = File::open(&from)?;
@@ -136,6 +141,8 @@ impl FileManager {
 
     /// persist file metadata to disk
     fn persist_metadata(&self) -> Result<()> {
+        let _span = tracing::trace_span!("persist_metadata").entered();
+
         let metadata = toml::to_string(&self.metadata)?;
 
         std::fs::write(&STATE.paths.metadata, metadata)?;
@@ -151,6 +158,8 @@ impl FileManager {
 
     /// unmanage the file at the given path
     pub fn remove(&mut self, path: &PathBuf) -> Result<()> {
+        let _span = tracing::trace_span!("remove").entered();
+
         let maybe_index = self
             .metadata
             .metadata
@@ -161,17 +170,21 @@ impl FileManager {
             return Ok(());
         };
 
+        tracing::trace!(index = index, "found index of path to remove");
+
         let removed_metadata = self.metadata.metadata.remove(index);
+        tracing::trace!(remaining = ?self.metadata.metadata, "removed file metadata");
 
         // remove the file from the local git repo
         let repo_local_path_to_removed_file =
             STATE.paths.repo_local_file_path(&removed_metadata.path);
 
         std::fs::remove_file(repo_local_path_to_removed_file)?;
+        tracing::trace!("removed file from repo");
 
         self.persist_metadata()?;
 
-        tracing::trace!(removed=?removed_metadata, "removed metadata");
+        tracing::trace!(removed=?removed_metadata, "removed managed file");
 
         Ok(())
     }

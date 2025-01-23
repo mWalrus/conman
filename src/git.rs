@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
-    Cred, FetchOptions, RemoteCallbacks, Repository,
+    Cred, CredentialType, Error, FetchOptions, RemoteCallbacks, Repository,
 };
 
 use crate::{file::FileManager, state::STATE};
@@ -18,8 +18,7 @@ pub struct Repo {
 //    and let them create the branch locally
 impl Repo {
     pub fn open() -> Result<Self> {
-        let span = tracing::trace_span!("open");
-        let _enter = span.enter();
+        let _span = tracing::trace_span!("open").entered();
 
         let repo_path = &*STATE.paths.repo;
 
@@ -45,8 +44,7 @@ impl Repo {
     }
 
     fn update_head(&self) -> Result<()> {
-        let span = tracing::trace_span!("update_head");
-        let _enter = span.enter();
+        let _span = tracing::trace_span!("update_head").entered();
 
         match self.inner.find_reference(&self.refname) {
             Ok(reference) => {
@@ -102,8 +100,7 @@ impl Repo {
     }
 
     fn set_upstream(&self, branch_name: &str) -> Result<()> {
-        let span = tracing::trace_span!("set_upstream");
-        let _enter = span.enter();
+        let _span = tracing::trace_span!("set_upstream").entered();
 
         let mut branch = self
             .inner
@@ -118,6 +115,8 @@ impl Repo {
     }
 
     fn make_initial_commit(&self) -> Result<()> {
+        let _span = tracing::trace_span!("make_initial_commit").entered();
+
         let reference = self.inner.find_reference("HEAD")?;
         let reference = reference.symbolic_target();
         tracing::trace!(ref=?reference, "found reference to HEAD");
@@ -137,48 +136,52 @@ impl Repo {
 
         self.inner.index()?.write()?;
 
+        tracing::trace!("wrote initial commit to disk");
         Ok(())
     }
 
-    fn remote_callbacks<'cb>() -> RemoteCallbacks<'cb> {
-        let mut callbacks = RemoteCallbacks::new();
-        callbacks.credentials(|_url, username_from_url, _allowed_types| {
-            let span = tracing::trace_span!("remote_callbacks");
-            let _enter = span.enter();
-            let username = username_from_url.unwrap();
+    fn credentials(
+        _url: &str,
+        username_from_url: Option<&str>,
+        _allowed_types: CredentialType,
+    ) -> Result<Cred, Error> {
+        let span = tracing::trace_span!("remote_callbacks");
+        let _enter = span.enter();
+        let username = username_from_url.unwrap();
 
-            if let Some(key) = STATE.config.upstream.key_file.as_ref() {
-                tracing::trace!(username = username, key = ?key, "built ssh credentials");
-                Cred::ssh_key(username, None, key, None)
-            } else {
-                // no creds?
-                tracing::trace!(
-                    username = username,
-                    "built username cred since no key file was found"
-                );
-                Cred::username(username)
-            }
-        });
-        callbacks
+        if let Some(key) = STATE.config.upstream.key_file.as_ref() {
+            tracing::trace!(username = username, key = ?key, "built ssh credentials");
+            Cred::ssh_key(username, None, key, None)
+        } else {
+            // no creds?
+            tracing::trace!(
+                username = username,
+                "built username cred since no key file was found"
+            );
+            Cred::username(username)
+        }
     }
 
     pub fn clone() -> Result<()> {
-        // do nothing if we can successfully open the repo on disk since we
-        // don't have to clone if that's the case
+        let _span = tracing::trace_span!("clone").entered();
+
         let repo_path = &*STATE.paths.repo;
 
         if let Ok(true) = std::fs::exists(&repo_path) {
-            tracing::trace!("repo path already exists");
+            tracing::trace!("repo path already exists, skipping clone");
             return Ok(());
         }
 
-        let remote_callbacks = Self::remote_callbacks();
+        let mut remote_callbacks = RemoteCallbacks::new();
+        remote_callbacks.credentials(Self::credentials);
 
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(remote_callbacks);
 
         let mut builder = RepoBuilder::new();
         builder.fetch_options(fetch_options);
+
+        tracing::trace!("finished building repo options");
 
         let url = &STATE.config.upstream.url;
 
@@ -217,24 +220,33 @@ impl Repo {
 
     /// Add a file from your local system to be managed by conman
     pub fn add(&self, source: PathBuf, encrypt: bool) -> Result<()> {
+        let _span = tracing::trace_span!("add").entered();
+
         let source_path = std::fs::canonicalize(source)?;
+
+        tracing::trace!(source=?source_path, "canonicalized source path");
 
         let mut file_manager = FileManager::new()?;
 
         // we return if the file is already managed since we
         // don't want to do anything in this case
         if file_manager.is_already_managed(&source_path) {
+            tracing::trace!("file is already managed, skipping");
             return Ok(());
         }
 
         let destination_path = STATE.paths.repo_local_file_path(&source_path);
 
         file_manager.copy(&source_path, &destination_path, encrypt)?;
+        tracing::trace!("done adding file");
 
         Ok(())
     }
 
     pub fn list(&self) -> Result<()> {
+        let _span = tracing::trace_span!("list").entered();
+        tracing::trace!("listing managed files");
+
         let file_manager = FileManager::new()?;
         let metadata = file_manager.metadata();
         for file in metadata.iter() {
@@ -244,13 +256,16 @@ impl Repo {
     }
 
     pub fn remove(&self, path: PathBuf) -> Result<()> {
+        let _span = tracing::trace_span!("remove").entered();
+        tracing::trace!(to_remove=?path, "removing managed file");
         let mut file_manager = FileManager::new()?;
         file_manager.remove(&path)?;
         Ok(())
     }
 
     pub fn save(&mut self) -> Result<()> {
-        // FIXME: implement branch support
+        let _span = tracing::trace_span!("save").entered();
+
         let mut index = self.inner.index()?;
 
         index.add_all(&["."], git2::IndexAddOption::DEFAULT, None)?;
@@ -280,12 +295,10 @@ impl Repo {
         let tree = self.inner.find_tree(oid)?;
 
         let head = self.inner.find_reference("HEAD")?;
-
         let parent_commit = head.peel_to_commit()?;
-
         let reference = head.symbolic_target();
 
-        tracing::trace!(tree=?tree, "preparing commit");
+        tracing::trace!(ref=?reference, parent=?parent_commit.id(), "preparing commit");
 
         // FIXME: construct a more descriptive commit message
         let commit_oid = self.inner.commit(
