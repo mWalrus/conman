@@ -26,7 +26,7 @@ url = "git@example.com:user/dotfiles"
 # keys are optional
 # relative key paths default to '$HOME/.ssh'.
 # absolute key paths are also supported.
-key = "private_key"
+key_file = "private_key"
 branch = "laptop" # optional, will default to main
 ```
 
