@@ -1,4 +1,4 @@
-# ConMan - A No-Nonsense Configuration File Manager
+# ConMan
 Easily manage local configuration across installations and devices by leveraging git.
 
 ## Principles
@@ -6,6 +6,7 @@ Easily manage local configuration across installations and devices by leveraging
 - ConMan should be intuitive
 - ConMan should be descriptive
 - ConMan should be as easy to use as possible
+- ConMan should provide encryption for secure file storage
 
 ## Installation
 1. Create a repo with your favorite git provider (GitHub, GitLab, ...)
