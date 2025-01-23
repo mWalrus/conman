@@ -31,16 +31,10 @@ fn main() {
         Command::Push => {}
         Command::Pull => {}
         Command::Add { path, encrypt } => {
-            let repo = Repo::open(&config).unwrap();
-            // TODO: add a discard command to discard unsaved changes
-
-            // NOTES:
-            // - when adding a file we will support both relative and absolute paths
-            // - the user has to have permission to edit files at said path
-            // - a specified path will be copied to the local conman repository
-            // - directories are not supported, just add files one by one
-
-            repo.add(&config, path, encrypt).unwrap();
+            Repo::open(&config)
+                .unwrap()
+                .add(&config, path, encrypt)
+                .unwrap();
         }
         Command::Remove { path } => {
             Repo::open(&config).unwrap().remove(&config, path).unwrap();
