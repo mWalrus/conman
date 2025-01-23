@@ -1,5 +1,6 @@
 use args::{Args, Command};
 use clap::Parser;
+use config::Config;
 use git::Repo;
 
 mod args;
@@ -11,16 +12,18 @@ mod git;
 fn main() {
     tracing_subscriber::fmt::init();
 
+    let config = Config::read().unwrap();
+
     let args = Args::parse();
 
     tracing::trace!(command = ?args.command, "running command");
 
     match args.command {
         Command::Init => {
-            Repo::clone().unwrap();
+            Repo::clone(&config).unwrap();
         }
         Command::Diff { no_color } => {
-            let repo = Repo::open().unwrap();
+            let repo = Repo::open(&config).unwrap();
         }
         Command::Status => {}
         Command::Edit { path, dont_save } => {}
@@ -28,7 +31,7 @@ fn main() {
         Command::Push => {}
         Command::Pull => {}
         Command::Add { path, encrypt } => {
-            let repo = Repo::open().unwrap();
+            let repo = Repo::open(&config).unwrap();
             // TODO: add a discard command to discard unsaved changes
 
             // NOTES:
@@ -37,7 +40,7 @@ fn main() {
             // - a specified path will be copied to the local conman repository
             // - directories are not supported, just add files one by one
 
-            repo.add(path, encrypt).unwrap();
+            repo.add(&config, path, encrypt).unwrap();
         }
     }
 }

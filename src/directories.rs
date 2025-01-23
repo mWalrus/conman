@@ -4,7 +4,7 @@ use anyhow::Result;
 use directories::BaseDirs;
 use url_parse::core::Parser;
 
-use crate::config::CONFIG;
+use crate::config::Config;
 
 pub(crate) const APPLICATION_NAME: &str = "conman";
 pub const DIRECTORIES: LazyLock<Directories> = LazyLock::new(|| Directories::new());
@@ -37,8 +37,8 @@ impl Directories {
         Self { cache, config }
     }
 
-    pub fn local_repo_path(&self) -> Result<PathBuf> {
-        let url = Parser::new(None).parse(&CONFIG.upstream.url)?;
+    pub fn local_repo_path(&self, config: &Config) -> Result<PathBuf> {
+        let url = Parser::new(None).parse(&config.upstream.url)?;
 
         let repo_name = url.path.unwrap().last().unwrap().clone();
         let repo_path = self.cache.join(repo_name);
@@ -46,8 +46,8 @@ impl Directories {
         Ok(repo_path)
     }
 
-    pub fn file_metadata_path(&self) -> Result<PathBuf> {
-        let local_repo_path = self.local_repo_path()?;
+    pub fn metadata_path(&self, config: &Config) -> Result<PathBuf> {
+        let local_repo_path = self.local_repo_path(config)?;
         let file_metadata_path = local_repo_path.join("metadata.toml");
         Ok(file_metadata_path)
     }

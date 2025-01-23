@@ -4,8 +4,6 @@ use crate::directories::DIRECTORIES;
 use anyhow::Result;
 use serde::{Deserialize, Deserializer, Serialize};
 
-pub(crate) const CONFIG: LazyLock<Config> = LazyLock::new(|| Config::read().unwrap());
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     pub encryption: EncryptionConfig,
