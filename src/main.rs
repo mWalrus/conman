@@ -42,6 +42,9 @@ fn main() {
 
             repo.add(&config, path, encrypt).unwrap();
         }
+        Command::Remove { path } => {
+            Repo::open(&config).unwrap().remove(&config, path).unwrap();
+        }
         Command::List => {
             let repo = Repo::open(&config).unwrap();
             repo.list(&config).unwrap();

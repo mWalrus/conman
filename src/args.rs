@@ -46,4 +46,9 @@ pub enum Command {
     },
     #[command(about = "list all managed files")]
     List,
+    #[command(about = "remove a managed file")]
+    Remove {
+        #[arg(help = "relative or absolute path to file")]
+        path: PathBuf,
+    },
 }

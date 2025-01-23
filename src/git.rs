@@ -3,13 +3,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use git2::{build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository};
 
-use crate::{
-    config::Config,
-    directories::DIRECTORIES,
-    file::{FileManager, FileMetadata},
-};
+use crate::{config::Config, directories::DIRECTORIES, file::FileManager};
 
-pub struct Repo(Repository);
+pub struct Repo {
+    inner: Repository,
+    path: PathBuf,
+}
 
 impl Repo {
     pub fn open(config: &Config) -> Result<Self> {
@@ -19,7 +18,10 @@ impl Repo {
         let repo = Repository::open(&repo_path).unwrap();
         tracing::trace!(path=?repo_path, "opened repo");
 
-        Ok(Self(repo))
+        Ok(Self {
+            inner: repo,
+            path: repo_path,
+        })
     }
 
     pub fn clone(config: &Config) -> Result<()> {
@@ -77,10 +79,8 @@ impl Repo {
             return Ok(());
         }
 
-        let local_repo_path = DIRECTORIES.local_repo_path(config)?;
-
         let file_name = source_path.file_name().unwrap();
-        let destination_path = local_repo_path.join(file_name);
+        let destination_path = self.path.join(file_name);
 
         file_manager.copy(config, &source_path, &destination_path, encrypt)?;
 
@@ -93,6 +93,12 @@ impl Repo {
         for file in metadata.iter() {
             println!("{file}");
         }
+        Ok(())
+    }
+
+    pub fn remove(&self, config: &Config, path: PathBuf) -> Result<()> {
+        let mut file_manager = FileManager::new(config)?;
+        file_manager.remove(&self.path, &path)?;
         Ok(())
     }
 }

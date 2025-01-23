@@ -29,6 +29,7 @@ impl Display for FileMetadata {
 
 pub struct FileManager {
     metadata: Metadata,
+    metadata_path: PathBuf,
 }
 
 #[derive(Deserialize, Serialize, Debug, Default)]
@@ -55,7 +56,10 @@ impl FileManager {
             }
         };
 
-        Ok(Self { metadata })
+        Ok(Self {
+            metadata,
+            metadata_path,
+        })
     }
 
     /// set up the encryptor used for `age` file encryption
@@ -79,7 +83,7 @@ impl FileManager {
             self.copy_unencrypted(from, to)?;
         }
         self.manage_new_file(from, encrypt);
-        self.persist_metadata(config)?;
+        self.persist_metadata()?;
         Ok(())
     }
 
@@ -135,18 +139,41 @@ impl FileManager {
     }
 
     /// persist file metadata to disk
-    fn persist_metadata(&self, config: &Config) -> Result<()> {
-        let metadata_path = DIRECTORIES.metadata_path(config)?;
-
+    fn persist_metadata(&self) -> Result<()> {
         let metadata = toml::to_string(&self.metadata)?;
 
-        std::fs::write(&metadata_path, metadata)?;
-        tracing::trace!(path=?metadata_path, "wrote metadata to disk");
+        std::fs::write(&self.metadata_path, metadata)?;
+        tracing::trace!(path=?self.metadata_path, "wrote metadata to disk");
 
         Ok(())
     }
 
     pub fn metadata(&self) -> &Vec<FileMetadata> {
         &self.metadata.metadata
+    }
+
+    pub fn remove(&mut self, repo: &PathBuf, path: &PathBuf) -> Result<()> {
+        let maybe_index = self
+            .metadata
+            .metadata
+            .iter()
+            .position(|managed_file| managed_file.path.eq(path));
+
+        let Some(index) = maybe_index else {
+            return Ok(());
+        };
+
+        let removed_metadata = self.metadata.metadata.remove(index);
+
+        // remove the file from the local git repo
+        let removed_file_name = removed_metadata.path.file_name().unwrap();
+        let repo_local_path_to_removed_file = repo.join(removed_file_name);
+        std::fs::remove_file(repo_local_path_to_removed_file)?;
+
+        self.persist_metadata()?;
+
+        tracing::trace!(removed=?removed_metadata, "removed metadata");
+
+        Ok(())
     }
 }
