@@ -36,6 +36,11 @@ struct Metadata {
     metadata: Vec<FileMetadata>,
 }
 
+// FIXME: ambiguate user specific paths so that we can install configs on systems with
+//        differing user names.
+//
+//        Example:
+//            - /home/wally/path/to/some/config.toml -> /home/<user>/path/to/some/config.toml
 impl FileManager {
     pub fn new() -> Result<Self> {
         let metadata_path = &STATE.paths.metadata;
