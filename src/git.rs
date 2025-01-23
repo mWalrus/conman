@@ -18,6 +18,27 @@ impl Repo {
         Ok(Self(repo))
     }
 
+    fn make_initial_commit(repo: &Repository) -> Result<()> {
+        let reference = repo.find_reference("HEAD")?;
+        let reference = reference.symbolic_target();
+        tracing::trace!(ref=?reference, "found reference to HEAD");
+
+        let signature = repo.signature()?;
+        let oid = repo.index()?.write_tree()?;
+        let tree = repo.find_tree(oid)?;
+
+        repo.commit(
+            reference,
+            &signature,
+            &signature,
+            "system-chore: initial commit",
+            &tree,
+            &[],
+        )?;
+        repo.index()?.write()?;
+        Ok(())
+    }
+
     pub fn clone() -> Result<()> {
         // do nothing if we can successfully open the repo on disk since we
         // don't have to clone if that's the case
@@ -55,8 +76,12 @@ impl Repo {
         let url = &STATE.config.upstream.url;
 
         tracing::trace!(url = url, "attempting to clone from upstream");
-        let _ = builder.clone(url, &repo_path)?;
+        let repo = builder.clone(url, &repo_path)?;
         tracing::trace!(url = url, "cloned repo from upstream");
+
+        if repo.is_empty()? {
+            Self::make_initial_commit(&repo)?;
+        }
 
         Ok(())
     }
@@ -92,6 +117,58 @@ impl Repo {
     pub fn remove(&self, path: PathBuf) -> Result<()> {
         let mut file_manager = FileManager::new()?;
         file_manager.remove(&path)?;
+        Ok(())
+    }
+
+    pub fn save(&mut self) -> Result<()> {
+        // FIXME: implement branch support
+        let mut index = self.0.index()?;
+
+        index.add_all(&["."], git2::IndexAddOption::DEFAULT, None)?;
+        tracing::trace!("staged all files");
+
+        // let branch_name = &STATE.config.upstream.branch;
+        // let branch = match self.0.find_branch(branch_name, BranchType::Local) {
+        //     Ok(branch) => {
+        //         tracing::trace!(branch_name = branch_name, "found branch");
+        //         branch
+        //     }
+        //     Err(_) => {
+        //         tracing::trace!(branch_name = branch_name, "no branch with name found");
+        //         let latest_commit = self.0.head()?.peel_to_commit()?;
+        //         tracing::trace!("creating branch");
+        //         self.0.branch(branch_name, &latest_commit, false)?
+        //     }
+        // };
+
+        // let reference = branch.get();
+
+        // let parent_commit = reference.peel_to_commit()?;
+        // tracing::trace!(parent_commit=?parent_commit.id(), "found parent commit");
+
+        let oid = index.write_tree()?;
+        let signature = self.0.signature()?;
+        let tree = self.0.find_tree(oid)?;
+
+        let parent_commit = self.0.head()?.peel_to_commit()?;
+
+        let head_reference = self.0.find_reference("HEAD")?;
+        let reference = head_reference.symbolic_target();
+
+        tracing::trace!(tree=?tree, "preparing commit");
+
+        let commit_oid = self.0.commit(
+            reference,
+            &signature,
+            &signature,
+            "system-update: updating files",
+            &tree,
+            &[&parent_commit],
+        )?;
+
+        index.write()?;
+        tracing::trace!(commit=?commit_oid, "wrote commit to disk");
+
         Ok(())
     }
 }
