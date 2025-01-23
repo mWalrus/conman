@@ -1,18 +1,16 @@
 use args::{Args, Command};
 use clap::Parser;
-use config::Config;
 use git::Repo;
 
 mod args;
 mod config;
-mod directories;
 mod file;
 mod git;
+mod paths;
+mod state;
 
 fn main() {
     tracing_subscriber::fmt::init();
-
-    let config = Config::read().unwrap();
 
     let args = Args::parse();
 
@@ -20,10 +18,10 @@ fn main() {
 
     match args.command {
         Command::Init => {
-            Repo::clone(&config).unwrap();
+            Repo::clone().unwrap();
         }
         Command::Diff { no_color } => {
-            let repo = Repo::open(&config).unwrap();
+            let repo = Repo::open().unwrap();
         }
         Command::Status => {}
         Command::Edit { path, dont_save } => {}
@@ -31,17 +29,14 @@ fn main() {
         Command::Push => {}
         Command::Pull => {}
         Command::Add { path, encrypt } => {
-            Repo::open(&config)
-                .unwrap()
-                .add(&config, path, encrypt)
-                .unwrap();
+            Repo::open().unwrap().add(path, encrypt).unwrap();
         }
         Command::Remove { path } => {
-            Repo::open(&config).unwrap().remove(&config, path).unwrap();
+            Repo::open().unwrap().remove(path).unwrap();
         }
         Command::List => {
-            let repo = Repo::open(&config).unwrap();
-            repo.list(&config).unwrap();
+            let repo = Repo::open().unwrap();
+            repo.list().unwrap();
         }
     }
 }

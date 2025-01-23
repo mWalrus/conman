@@ -9,7 +9,7 @@ use age::{secrecy::SecretString, Encryptor};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::{config::Config, directories::DIRECTORIES};
+use crate::state::STATE;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileMetadata {
@@ -29,7 +29,6 @@ impl Display for FileMetadata {
 
 pub struct FileManager {
     metadata: Metadata,
-    metadata_path: PathBuf,
 }
 
 #[derive(Deserialize, Serialize, Debug, Default)]
@@ -38,8 +37,8 @@ struct Metadata {
 }
 
 impl FileManager {
-    pub fn new(config: &Config) -> Result<Self> {
-        let metadata_path = DIRECTORIES.metadata_path(config)?;
+    pub fn new() -> Result<Self> {
+        let metadata_path = &STATE.paths.metadata;
 
         let metadata = match File::open(&metadata_path) {
             Ok(mut file) => {
@@ -56,10 +55,7 @@ impl FileManager {
             }
         };
 
-        Ok(Self {
-            metadata,
-            metadata_path,
-        })
+        Ok(Self { metadata })
     }
 
     /// set up the encryptor used for `age` file encryption
@@ -69,15 +65,10 @@ impl FileManager {
     }
 
     /// copy the file at `from` into `to`
-    pub fn copy(
-        &mut self,
-        config: &Config,
-        from: &PathBuf,
-        to: &PathBuf,
-        encrypt: bool,
-    ) -> Result<()> {
+    pub fn copy(&mut self, from: &PathBuf, to: &PathBuf, encrypt: bool) -> Result<()> {
         if encrypt {
-            let encryptor = Self::init_encryptor(config.encryption.passphrase.clone());
+            let passphrase = STATE.config.encryption.passphrase.clone();
+            let encryptor = Self::init_encryptor(passphrase);
             self.copy_encrypted(encryptor, from, to)?;
         } else {
             self.copy_unencrypted(from, to)?;
@@ -142,17 +133,19 @@ impl FileManager {
     fn persist_metadata(&self) -> Result<()> {
         let metadata = toml::to_string(&self.metadata)?;
 
-        std::fs::write(&self.metadata_path, metadata)?;
-        tracing::trace!(path=?self.metadata_path, "wrote metadata to disk");
+        std::fs::write(&STATE.paths.metadata, metadata)?;
+        tracing::trace!(path=?STATE.paths.metadata, "wrote metadata to disk");
 
         Ok(())
     }
 
+    /// helper to access metadata
     pub fn metadata(&self) -> &Vec<FileMetadata> {
         &self.metadata.metadata
     }
 
-    pub fn remove(&mut self, repo: &PathBuf, path: &PathBuf) -> Result<()> {
+    /// unmanage the file at the given path
+    pub fn remove(&mut self, path: &PathBuf) -> Result<()> {
         let maybe_index = self
             .metadata
             .metadata
@@ -166,8 +159,9 @@ impl FileManager {
         let removed_metadata = self.metadata.metadata.remove(index);
 
         // remove the file from the local git repo
-        let removed_file_name = removed_metadata.path.file_name().unwrap();
-        let repo_local_path_to_removed_file = repo.join(removed_file_name);
+        let repo_local_path_to_removed_file =
+            STATE.paths.repo_local_file_path(&removed_metadata.path);
+
         std::fs::remove_file(repo_local_path_to_removed_file)?;
 
         self.persist_metadata()?;

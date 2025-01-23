@@ -1,7 +1,8 @@
-use std::{fmt::Debug, fs::File, io::Read, path::PathBuf, sync::LazyLock};
+use std::{fmt::Debug, fs::File, io::Read, path::PathBuf};
 
-use crate::directories::DIRECTORIES;
+use crate::paths::APPLICATION_NAME;
 use anyhow::Result;
+use directories::BaseDirs;
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -30,7 +31,15 @@ fn default_branch() -> String {
 
 impl Config {
     pub fn read() -> Result<Self> {
-        let config_file = DIRECTORIES.config_path();
+        let base_dirs = BaseDirs::new().unwrap();
+
+        let config = base_dirs.config_dir().join(APPLICATION_NAME);
+        if !std::fs::exists(&config).unwrap() {
+            std::fs::create_dir(&config).unwrap();
+            tracing::trace!("created $HOME/.config/{APPLICATION_NAME}");
+        }
+
+        let config_file = config.join("config.toml");
         let mut config_file = File::open(config_file)?;
 
         let mut contents = String::new();

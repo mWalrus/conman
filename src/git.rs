@@ -3,31 +3,25 @@ use std::path::PathBuf;
 use anyhow::Result;
 use git2::{build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository};
 
-use crate::{config::Config, directories::DIRECTORIES, file::FileManager};
+use crate::{file::FileManager, state::STATE};
 
-pub struct Repo {
-    inner: Repository,
-    path: PathBuf,
-}
+pub struct Repo(Repository);
 
 impl Repo {
-    pub fn open(config: &Config) -> Result<Self> {
-        let repo_path = DIRECTORIES.local_repo_path(config)?;
+    pub fn open() -> Result<Self> {
+        let repo_path = &*STATE.paths.repo;
 
         tracing::trace!(path=?repo_path, "attempting to open repo");
         let repo = Repository::open(&repo_path).unwrap();
         tracing::trace!(path=?repo_path, "opened repo");
 
-        Ok(Self {
-            inner: repo,
-            path: repo_path,
-        })
+        Ok(Self(repo))
     }
 
-    pub fn clone(config: &Config) -> Result<()> {
+    pub fn clone() -> Result<()> {
         // do nothing if we can successfully open the repo on disk since we
         // don't have to clone if that's the case
-        let repo_path = DIRECTORIES.local_repo_path(config)?;
+        let repo_path = &*STATE.paths.repo;
 
         if let Ok(true) = std::fs::exists(&repo_path) {
             tracing::trace!("repo path already exists");
@@ -39,7 +33,7 @@ impl Repo {
             tracing::trace!("fetching credentials to use for clone from upstream");
             let username = username_from_url.unwrap();
 
-            if let Some(key) = config.upstream.key_file.as_ref() {
+            if let Some(key) = STATE.config.upstream.key_file.as_ref() {
                 tracing::trace!(username = username, key = ?key, "built ssh credentials");
                 Cred::ssh_key(username, None, key, None)
             } else {
@@ -58,7 +52,7 @@ impl Repo {
         let mut builder = RepoBuilder::new();
         builder.fetch_options(fetch_options);
 
-        let url = &config.upstream.url;
+        let url = &STATE.config.upstream.url;
 
         tracing::trace!(url = url, "attempting to clone from upstream");
         let _ = builder.clone(url, &repo_path)?;
@@ -68,10 +62,10 @@ impl Repo {
     }
 
     /// Add a file from your local system to be managed by conman
-    pub fn add(&self, config: &Config, source: PathBuf, encrypt: bool) -> Result<()> {
+    pub fn add(&self, source: PathBuf, encrypt: bool) -> Result<()> {
         let source_path = std::fs::canonicalize(source)?;
 
-        let mut file_manager = FileManager::new(config)?;
+        let mut file_manager = FileManager::new()?;
 
         // we return if the file is already managed since we
         // don't want to do anything in this case
@@ -79,16 +73,15 @@ impl Repo {
             return Ok(());
         }
 
-        let file_name = source_path.file_name().unwrap();
-        let destination_path = self.path.join(file_name);
+        let destination_path = STATE.paths.repo_local_file_path(&source_path);
 
-        file_manager.copy(config, &source_path, &destination_path, encrypt)?;
+        file_manager.copy(&source_path, &destination_path, encrypt)?;
 
         Ok(())
     }
 
-    pub fn list(&self, config: &Config) -> Result<()> {
-        let file_manager = FileManager::new(config)?;
+    pub fn list(&self) -> Result<()> {
+        let file_manager = FileManager::new()?;
         let metadata = file_manager.metadata();
         for file in metadata.iter() {
             println!("{file}");
@@ -96,9 +89,9 @@ impl Repo {
         Ok(())
     }
 
-    pub fn remove(&self, config: &Config, path: PathBuf) -> Result<()> {
-        let mut file_manager = FileManager::new(config)?;
-        file_manager.remove(&self.path, &path)?;
+    pub fn remove(&self, path: PathBuf) -> Result<()> {
+        let mut file_manager = FileManager::new()?;
+        file_manager.remove(&path)?;
         Ok(())
     }
 }
