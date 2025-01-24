@@ -283,25 +283,6 @@ impl Repo {
         index.add_all(&["."], git2::IndexAddOption::DEFAULT, None)?;
         tracing::trace!("staged all files");
 
-        // let branch_name = &STATE.config.upstream.branch;
-        // let branch = match self.0.find_branch(branch_name, BranchType::Local) {
-        //     Ok(branch) => {
-        //         tracing::trace!(branch_name = branch_name, "found branch");
-        //         branch
-        //     }
-        //     Err(_) => {
-        //         tracing::trace!(branch_name = branch_name, "no branch with name found");
-        //         let latest_commit = self.0.head()?.peel_to_commit()?;
-        //         tracing::trace!("creating branch");
-        //         self.0.branch(branch_name, &latest_commit, false)?
-        //     }
-        // };
-
-        // let reference = branch.get();
-
-        // let parent_commit = reference.peel_to_commit()?;
-        // tracing::trace!(parent_commit=?parent_commit.id(), "found parent commit");
-
         let oid = index.write_tree()?;
         let signature = self.inner.signature()?;
         let tree = self.inner.find_tree(oid)?;
