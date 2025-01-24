@@ -28,7 +28,9 @@ impl Repo {
 
         let repo = Self::new_internal(repo);
 
-        repo.update_head()?;
+        if repo.needs_to_update_head()? {
+            repo.update_head()?;
+        }
 
         Ok(repo)
     }
@@ -43,18 +45,17 @@ impl Repo {
         }
     }
 
-    fn update_head(&self) -> Result<()> {
-        let _span = tracing::trace_span!("update_head").entered();
-
+    fn needs_to_update_head(&self) -> Result<bool> {
         let head = self.inner.find_reference("HEAD")?;
-        if head
+        let needs_update = head
             .symbolic_target()
             .map(|r| r.eq(&self.refname))
-            .unwrap_or(false)
-        {
-            tracing::trace!("HEAD already set to {}, skipping updating", self.refname);
-            return Ok(());
-        }
+            .unwrap_or(false);
+        Ok(needs_update)
+    }
+
+    fn update_head(&self) -> Result<()> {
+        let _span = tracing::trace_span!("update_head").entered();
 
         match self.inner.find_reference(&self.refname) {
             Ok(reference) => {
@@ -76,6 +77,7 @@ impl Repo {
                 tracing::trace!("checked out new head");
             }
             Err(_) => {
+                let head = self.inner.find_reference("HEAD")?;
                 let head_commit = head.peel_to_commit()?;
 
                 tracing::trace!(id=?head_commit.id(), "found head commit");
@@ -210,7 +212,9 @@ impl Repo {
 
         repo.set_upstream("main")?;
 
-        repo.update_head()?;
+        if repo.needs_to_update_head()? {
+            repo.update_head()?;
+        }
 
         Ok(())
     }
