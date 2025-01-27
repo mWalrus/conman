@@ -520,6 +520,10 @@ impl Repo {
     pub fn pull(&self) -> Result<()> {
         let _span = tracing::trace_span!("pull").entered();
 
+        if self.check_has_unsaved()? {
+            return Ok(());
+        }
+
         let remote_name = "origin";
         let remote_branch = &STATE.config.upstream.branch;
 
@@ -689,6 +693,10 @@ impl Repo {
 
     pub fn push(&self) -> Result<()> {
         let _span = tracing::trace_span!("push").entered();
+
+        if self.check_has_unsaved()? {
+            return Ok(());
+        }
 
         let mut remote_callbacks = RemoteCallbacks::new();
         remote_callbacks.push_update_reference(|refname, status| {
