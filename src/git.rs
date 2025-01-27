@@ -296,8 +296,26 @@ impl Repo {
 
         let file_manager = FileManager::new()?;
         let metadata = file_manager.metadata();
-        for file in metadata.iter() {
-            println!("{file}");
+
+        println!("{}", "Managed files:".bold());
+        for (i, file) in metadata.iter().enumerate() {
+            let encrypted_text = if file.encrypted {
+                "true".green()
+            } else {
+                "false".red()
+            };
+
+            println!(
+                "{} {}",
+                "File".blue().bold(),
+                (i + 1).to_string().blue().bold()
+            );
+            println!(
+                "  {}: {}",
+                "Path".bold(),
+                file.path.display().to_string().underline()
+            );
+            println!("  {}: {}", "Encrypted".bold(), encrypted_text);
         }
         Ok(())
     }

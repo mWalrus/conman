@@ -17,16 +17,6 @@ pub struct FileMetadata {
     pub encrypted: bool,
 }
 
-impl Display for FileMetadata {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "File:\n\tpath: {:?}\n\tencrypted: {}",
-            self.path, self.encrypted
-        )
-    }
-}
-
 pub struct FileManager {
     metadata: Metadata,
 }
