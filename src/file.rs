@@ -13,8 +13,8 @@ use crate::state::STATE;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileMetadata {
-    path: PathBuf,
-    encrypted: bool,
+    pub path: PathBuf,
+    pub encrypted: bool,
 }
 
 impl Display for FileMetadata {

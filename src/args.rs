@@ -51,4 +51,13 @@ pub enum Command {
         #[arg(help = "relative or absolute path to file")]
         path: PathBuf,
     },
+    #[command(about = "apply managed configuration")]
+    Apply {
+        #[arg(
+            long,
+            help = "ask for confirmation to apply before applying each file",
+            required = false
+        )]
+        ask: bool,
+    },
 }

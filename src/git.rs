@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use colored::Colorize;
+use dialoguer::Confirm;
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
-    PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status, StatusOptions,
+    PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status, StatusOptions, Statuses,
 };
 
 use crate::{file::FileManager, paths::METADATA_FILE_NAME, state::STATE};
@@ -534,11 +535,21 @@ impl Repo {
     pub fn status(&self) -> Result<()> {
         let _span = tracing::trace_span!("status").entered();
 
-        let Ok(Some(updates)) = self.collect_status_updates() else {
+        let entries = self.status_entries()?;
+
+        if !self.has_changes(&entries)? {
             println!("{}", "No changes detected, there is nothing to do".green());
             return Ok(());
-        };
+        }
 
+        let updates = self.prepare_status_updates(entries)?;
+
+        self.print_status_updates(updates);
+
+        Ok(())
+    }
+
+    fn print_status_updates(&self, updates: Vec<StatusEntry>) {
         println!("{}", "Unsaved changes:".bold());
 
         for update in updates.iter() {
@@ -551,19 +562,24 @@ impl Repo {
                 }
             }
         }
-
-        Ok(())
     }
 
-    fn collect_status_updates(&self) -> Result<Option<Vec<StatusEntry>>> {
-        let _span = tracing::trace_span!("collect_status_updates").entered();
+    fn status_entries(&self) -> Result<Statuses<'_>> {
+        let _span = tracing::trace_span!("status_entries").entered();
 
         let mut status_options = StatusOptions::new();
         status_options.include_untracked(true);
 
         let status_entries = self.inner.statuses(Some(&mut status_options))?;
+        tracing::trace!("got status entries");
 
-        let has_changes = status_entries.iter().any(|entry| {
+        Ok(status_entries)
+    }
+
+    fn has_changes(&self, entries: &Statuses<'_>) -> Result<bool> {
+        let _span = tracing::trace_span!("has_changes").entered();
+
+        let has_changes = entries.iter().any(|entry| {
             entry.status().intersects(
                 Status::WT_NEW
                     | Status::WT_MODIFIED
@@ -572,14 +588,18 @@ impl Repo {
                     | Status::WT_TYPECHANGE,
             )
         });
-        if !has_changes {
-            tracing::trace!("found no local changes");
-            return Ok(None);
-        }
 
-        let mut status_updates = Vec::with_capacity(status_entries.len());
+        tracing::trace!("has changes: {has_changes}");
 
-        for status_entry in status_entries.iter() {
+        Ok(has_changes)
+    }
+
+    fn prepare_status_updates(&self, entries: Statuses<'_>) -> Result<Vec<StatusEntry>> {
+        let _span = tracing::trace_span!("prepare_status_entries").entered();
+
+        let mut status_updates = Vec::with_capacity(entries.len());
+
+        for status_entry in entries.iter() {
             let workdir_tree_status = match status_entry.status() {
                 s if s.contains(Status::WT_NEW) => StatusUpdate::New,
                 s if s.contains(Status::WT_MODIFIED) => StatusUpdate::Modified,
@@ -615,7 +635,56 @@ impl Repo {
                 new: new_path,
             });
         }
-        Ok(Some(status_updates))
+        Ok(status_updates)
+    }
+
+    fn check_has_unsaved(&self) -> Result<bool> {
+        let _span = tracing::trace_span!("check_has_unsaved").entered();
+
+        let status_entries = self.status_entries()?;
+        if self.has_changes(&status_entries)? {
+            println!(
+                "{}",
+                "You have unsaved changes, please save them first".yellow()
+            );
+            let updates = self.prepare_status_updates(status_entries)?;
+            self.print_status_updates(updates);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn apply(&self, ask: bool) -> Result<()> {
+        let _span = tracing::trace_span!("apply").entered();
+
+        if self.check_has_unsaved()? {
+            return Ok(());
+        }
+
+        let file_manager = FileManager::new()?;
+        let metadata = file_manager.metadata();
+
+        let zipped = metadata
+            .iter()
+            .map(|metadata| {
+                let file_name = metadata.path.file_name().unwrap();
+                STATE.paths.repo.join(file_name)
+            })
+            .zip(metadata.iter());
+
+        for (repo_path, metadata) in zipped {
+            tracing::trace!(repo_path=?repo_path, disk_path=?metadata.path, encrypted=metadata.encrypted, "handling file");
+            if ask {
+                let prompt = format!("Do you want to apply '{}'", metadata.path.display());
+                if let Ok(false) = Confirm::new().with_prompt(prompt).interact() {
+                    continue;
+                }
+            }
+            std::fs::copy(&repo_path, &metadata.path)?;
+            tracing::trace!(from=?repo_path, to=?metadata.path, "copied file");
+        }
+
+        Ok(())
     }
 
     pub fn push(&self) -> Result<()> {

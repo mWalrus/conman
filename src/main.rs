@@ -43,5 +43,8 @@ fn main() {
         Command::List => {
             Repo::open().unwrap().list().unwrap();
         }
+        Command::Apply { ask } => {
+            Repo::open().unwrap().apply(ask).unwrap();
+        }
     }
 }
