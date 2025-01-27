@@ -1,17 +1,45 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use colored::Colorize;
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
-    PushOptions, Reference, Remote, RemoteCallbacks, Repository,
+    PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status, StatusOptions,
 };
 
-use crate::{file::FileManager, state::STATE};
+use crate::{file::FileManager, paths::METADATA_FILE_NAME, state::STATE};
 
 pub struct Repo {
     inner: Repository,
     refname: String,
+}
+
+struct StatusEntry {
+    status: StatusUpdate,
+    old: Option<PathBuf>,
+    new: Option<PathBuf>,
+}
+
+enum StatusUpdate {
+    New,
+    Modified,
+    Deleted,
+    Renamed,
+    TypeChange,
+}
+
+impl std::fmt::Display for StatusUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            StatusUpdate::New => "new".green(),
+            StatusUpdate::Modified => "modified".yellow(),
+            StatusUpdate::Deleted => "deleted".red(),
+            StatusUpdate::Renamed => "renamed".magenta(),
+            StatusUpdate::TypeChange => "typechange".blue(),
+        };
+        write!(f, "{}", s.bold())
+    }
 }
 
 // TODO:
@@ -501,6 +529,93 @@ impl Repo {
         self.merge(remote_branch, fetch_commit)?;
 
         Ok(())
+    }
+
+    pub fn status(&self) -> Result<()> {
+        let _span = tracing::trace_span!("status").entered();
+
+        let Ok(Some(updates)) = self.collect_status_updates() else {
+            println!("{}", "No changes detected, there is nothing to do".green());
+            return Ok(());
+        };
+
+        println!("{}", "Unsaved changes:".bold());
+
+        for update in updates.iter() {
+            match (update.old.as_ref(), update.new.as_ref()) {
+                (Some(old), Some(new)) if old != new => {
+                    println!("{}: {} -> {}", update.status, old.display(), new.display());
+                }
+                (old, new) => {
+                    println!("{}: {}", update.status, old.or(new).unwrap().display())
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_status_updates(&self) -> Result<Option<Vec<StatusEntry>>> {
+        let _span = tracing::trace_span!("collect_status_updates").entered();
+
+        let mut status_options = StatusOptions::new();
+        status_options.include_untracked(true);
+
+        let status_entries = self.inner.statuses(Some(&mut status_options))?;
+
+        let has_changes = status_entries.iter().any(|entry| {
+            entry.status().intersects(
+                Status::WT_NEW
+                    | Status::WT_MODIFIED
+                    | Status::WT_DELETED
+                    | Status::WT_RENAMED
+                    | Status::WT_TYPECHANGE,
+            )
+        });
+        if !has_changes {
+            tracing::trace!("found no local changes");
+            return Ok(None);
+        }
+
+        let mut status_updates = Vec::with_capacity(status_entries.len());
+
+        for status_entry in status_entries.iter() {
+            let workdir_tree_status = match status_entry.status() {
+                s if s.contains(Status::WT_NEW) => StatusUpdate::New,
+                s if s.contains(Status::WT_MODIFIED) => StatusUpdate::Modified,
+                s if s.contains(Status::WT_DELETED) => StatusUpdate::Deleted,
+                s if s.contains(Status::WT_RENAMED) => StatusUpdate::Renamed,
+                s if s.contains(Status::WT_TYPECHANGE) => StatusUpdate::TypeChange,
+                _ => continue,
+            };
+
+            if status_entry
+                .path()
+                .map(|path| path.ends_with(METADATA_FILE_NAME))
+                .unwrap_or(false)
+            {
+                tracing::trace!(
+                    path = status_entry.path(),
+                    "found metadata file, omitting status"
+                );
+                continue;
+            }
+
+            let Some(diff) = status_entry.index_to_workdir() else {
+                tracing::trace!("no diff between index and workdir found for the current entry");
+                continue;
+            };
+
+            let old_path = diff.old_file().path().map(|path| path.to_path_buf());
+            let new_path = diff.new_file().path().map(|path| path.to_path_buf());
+
+            status_updates.push(StatusEntry {
+                status: workdir_tree_status,
+                old: old_path,
+                new: new_path,
+            });
+        }
+        Ok(Some(status_updates))
     }
 
     pub fn push(&self) -> Result<()> {

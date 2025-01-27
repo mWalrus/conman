@@ -23,7 +23,9 @@ fn main() {
         Command::Diff { no_color } => {
             let repo = Repo::open().unwrap();
         }
-        Command::Status => {}
+        Command::Status => {
+            Repo::open().unwrap().status().unwrap();
+        }
         Command::Edit { path, dont_save } => {}
         Command::Save => Repo::open().unwrap().save().unwrap(),
         Command::Push => {
