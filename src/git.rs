@@ -340,6 +340,14 @@ impl Repo {
 
         let mut index = self.inner.index()?;
 
+        // FIXME: fetch status updates here before pushing so that we can construct a more descriptive commit message below
+        //        Example:
+        //            system-update: updating files
+        //
+        //            new: /path/to/file/with/config.toml
+        //            modified: /path/to/another/file.yml
+        //            deleted: /path/to/the/most/epic/config.cfg
+
         index.add_all(&["."], git2::IndexAddOption::DEFAULT, None)?;
         tracing::trace!("staged all files");
 
@@ -353,7 +361,6 @@ impl Repo {
 
         tracing::trace!(ref=?reference, parent=?parent_commit.id(), "preparing commit");
 
-        // FIXME: construct a more descriptive commit message
         let commit_oid = self.inner.commit(
             reference,
             &signature,
