@@ -58,6 +58,13 @@ impl Repo {
 
         let repo = Self::new_internal(repo);
 
+        // FIXME: if a user defines a config branch and applies it to their system
+        //        and then switches to another config branch and applies that, what
+        //        happens to files that were managed by the first config branch but
+        //        not the second?
+        //        Do we want to remove applied files from the user's system or do
+        //        we simply warn when we detect a branch switch that has differences
+        //        in managed files?
         if repo.needs_to_update_head()? {
             repo.update_head()?;
         }
