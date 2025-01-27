@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
-    Cred, CredentialType, Error, FetchOptions, RemoteCallbacks, Repository,
+    AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
+    Reference, Remote, RemoteCallbacks, Repository,
 };
 
 use crate::{file::FileManager, state::STATE};
@@ -46,11 +47,16 @@ impl Repo {
     }
 
     fn needs_to_update_head(&self) -> Result<bool> {
+        let _span = tracing::trace_span!("needs_to_update_head").entered();
+
         let head = self.inner.find_reference("HEAD")?;
         let needs_update = head
             .symbolic_target()
-            .map(|r| r.eq(&self.refname))
+            .map(|r| !r.eq(&self.refname))
             .unwrap_or(false);
+
+        tracing::trace!(head=?head.symbolic_target(), ref=self.refname ,"update head?: {needs_update}");
+
         Ok(needs_update)
     }
 
@@ -305,6 +311,194 @@ impl Repo {
 
         index.write()?;
         tracing::trace!(commit=?commit_oid, "wrote commit to disk");
+
+        Ok(())
+    }
+
+    fn fetch<'r>(&'r self, refs: &[&str], remote: &'r mut Remote) -> Result<AnnotatedCommit<'r>> {
+        let _span = tracing::trace_span!("fetch").entered();
+
+        // FIXME: add callbacks to report progress
+        let mut remote_callbacks = RemoteCallbacks::new();
+        remote_callbacks.credentials(Self::credentials);
+
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(remote_callbacks);
+        fetch_options.download_tags(AutotagOption::All);
+
+        remote.fetch(refs, Some(&mut fetch_options), None)?;
+
+        tracing::trace!(refs = ?refs, "fetched data from remote");
+
+        let fetch_head = self.inner.find_reference("FETCH_HEAD")?;
+
+        tracing::trace!("got FETCH_HEAD reference");
+
+        let fetch_commit = self.inner.reference_to_annotated_commit(&fetch_head)?;
+
+        tracing::trace!(
+            commit = ?fetch_commit.id(),
+            "created annotated commit from FETCH_HEAD reference"
+        );
+        Ok(fetch_commit)
+    }
+
+    fn merge<'r>(&'r self, remote_branch: &str, fetch_commit: AnnotatedCommit<'r>) -> Result<()> {
+        let _span = tracing::trace_span!("merge").entered();
+
+        let analysis = self.inner.merge_analysis(&[&fetch_commit])?;
+        match analysis.0 {
+            MergeAnalysis::ANALYSIS_FASTFORWARD => {
+                tracing::trace!("performing a fast-forward merge");
+                let refname = format!("refs/heads/{remote_branch}");
+                match self.inner.find_reference(&refname) {
+                    Ok(mut reference) => {
+                        self.fast_forward(&mut reference, fetch_commit)?;
+                    }
+                    Err(_) => {
+                        let remote_commit_id = fetch_commit.id();
+                        self.inner.reference(
+                            &refname,
+                            remote_commit_id,
+                            true,
+                            &format!("setting {remote_branch} to {remote_commit_id}"),
+                        )?;
+                        tracing::trace!(commit_id=?remote_commit_id, "created reference to remote commit");
+
+                        self.inner.set_head(&refname)?;
+                        self.inner.checkout_head(Some(
+                            CheckoutBuilder::default()
+                                .allow_conflicts(true)
+                                .conflict_style_merge(true)
+                                .force(),
+                        ))?;
+                        tracing::trace!("set head to {refname}");
+                    }
+                }
+            }
+            MergeAnalysis::ANALYSIS_NORMAL => {
+                tracing::trace!("performing a normal merge");
+                let head = self.inner.head()?;
+                let head_commit = self.inner.reference_to_annotated_commit(&head)?;
+                self.normal_merge(head_commit, fetch_commit)?;
+            }
+            MergeAnalysis::ANALYSIS_NONE => {
+                // FIXME: warn?
+                tracing::trace!("no merge possible");
+            }
+            MergeAnalysis::ANALYSIS_UP_TO_DATE => {
+                tracing::trace!("local branch is up-to-date, nothing to do");
+            }
+            MergeAnalysis::ANALYSIS_UNBORN => {
+                tracing::trace!("HEAD unborn, pointing HEAD to fetch commit");
+                if let Some(refname) = fetch_commit.refname() {
+                    self.inner.set_head(refname)?;
+                }
+            }
+            _ => {
+                unreachable!()
+            }
+        }
+        Ok(())
+    }
+
+    fn fast_forward<'r>(
+        &'r self,
+        remote_reference: &mut Reference<'r>,
+        remote_commit: AnnotatedCommit<'r>,
+    ) -> Result<()> {
+        let _span = tracing::trace_span!("fast_forward").entered();
+
+        let name = match remote_reference.name() {
+            Some(name) => name.to_string(),
+            None => String::from_utf8_lossy(remote_reference.name_bytes()).to_string(),
+        };
+
+        tracing::trace!(name = name, "got remote name");
+
+        let remote_commit_id = remote_commit.id();
+
+        let message = format!("system-fast-forward: setting {name} to {remote_commit_id}");
+
+        remote_reference.set_target(remote_commit_id, &message)?;
+        tracing::trace!("set remote to point to {remote_commit_id}");
+
+        self.inner.set_head(&name)?;
+        self.inner
+            .checkout_head(Some(CheckoutBuilder::default().force()))?;
+        tracing::trace!("set head to remote '{name}'");
+
+        Ok(())
+    }
+
+    fn normal_merge<'r>(
+        &'r self,
+        head_commit: AnnotatedCommit<'r>,
+        fetch_commit: AnnotatedCommit<'r>,
+    ) -> Result<()> {
+        let _span = tracing::trace_span!("normal merge").entered();
+
+        let local_id = head_commit.id();
+        let remote_id = fetch_commit.id();
+
+        let local_tree = self.inner.find_commit(local_id)?.tree()?;
+        let remote_tree = self.inner.find_commit(remote_id)?.tree()?;
+
+        let merge_base = self.inner.merge_base(local_id, remote_id)?;
+        tracing::trace!(
+            local = ?local_id,
+            remote = ?remote_id,
+            merge_base = ?merge_base,
+            "found merge base"
+        );
+        let ancestor = self.inner.find_commit(merge_base)?.tree()?;
+        let mut index = self
+            .inner
+            .merge_trees(&ancestor, &local_tree, &remote_tree, None)?;
+        tracing::trace!("merged local and remote trees");
+
+        if index.has_conflicts() {
+            // FIXME: warn?
+            tracing::trace!("merge conflicts detected...");
+            self.inner.checkout_index(Some(&mut index), None)?;
+            return Ok(());
+        }
+
+        let tree_oid = index.write_tree_to(&self.inner)?;
+        tracing::trace!("wrote index to repo");
+        let result_tree = self.inner.find_tree(tree_oid)?;
+
+        let message = format!("system-merge: {remote_id} into {local_id}");
+        let signature = self.inner.signature()?;
+        let local_commit = self.inner.find_commit(local_id)?;
+        let remote_commit = self.inner.find_commit(remote_id)?;
+
+        let merge_commit = self.inner.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            &message,
+            &result_tree,
+            &[&local_commit, &remote_commit],
+        )?;
+        tracing::trace!(merge_commit=?merge_commit, "made merge commit");
+
+        self.inner.checkout_head(None)?;
+        tracing::trace!("checked out head");
+        Ok(())
+    }
+
+    pub fn pull(&self) -> Result<()> {
+        let _span = tracing::trace_span!("pull").entered();
+
+        let remote_name = "origin";
+        let remote_branch = &STATE.config.upstream.branch;
+
+        let mut remote = self.inner.find_remote(&remote_name)?;
+
+        let fetch_commit = self.fetch(&[remote_branch], &mut remote)?;
+
+        self.merge(remote_branch, fetch_commit)?;
 
         Ok(())
     }
