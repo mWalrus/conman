@@ -7,6 +7,8 @@ use url_parse::core::Parser;
 use crate::config::Config;
 
 pub(crate) const APPLICATION_NAME: &str = "conman";
+// FIXME: rename metadata file to something like _conman_internal_metadata.toml
+pub(crate) const METADATA_FILE_NAME: &str = "metadata.toml";
 
 pub struct Paths {
     pub repo: PathBuf,
@@ -33,7 +35,7 @@ impl Paths {
         let repo_name = url.path.unwrap().last().unwrap().clone();
         let repo = cache.join(repo_name);
 
-        let metadata = repo.join("metadata.toml");
+        let metadata = repo.join(METADATA_FILE_NAME);
 
         Ok(Self {
             cache,
