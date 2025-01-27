@@ -4,7 +4,7 @@ use anyhow::Result;
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
-    Reference, Remote, RemoteCallbacks, Repository,
+    PushOptions, Reference, Remote, RemoteCallbacks, Repository,
 };
 
 use crate::{file::FileManager, state::STATE};
@@ -499,6 +499,36 @@ impl Repo {
         let fetch_commit = self.fetch(&[remote_branch], &mut remote)?;
 
         self.merge(remote_branch, fetch_commit)?;
+
+        Ok(())
+    }
+
+    pub fn push(&self) -> Result<()> {
+        let _span = tracing::trace_span!("push").entered();
+
+        let mut remote_callbacks = RemoteCallbacks::new();
+        remote_callbacks.push_update_reference(|refname, status| {
+            let _span = tracing::trace_span!("push_update_reference").entered();
+            match status {
+                Some(status) => {
+                    tracing::trace!(status = status, "push rejected for ref {refname}");
+                }
+                None => {
+                    tracing::trace!("ref {refname} was updated");
+                }
+            }
+            Ok(())
+        });
+        remote_callbacks.credentials(Self::credentials);
+
+        let mut push_options = PushOptions::new();
+        push_options.remote_callbacks(remote_callbacks);
+
+        let mut remote = self.inner.find_remote("origin")?;
+        tracing::trace!("found remote origin");
+
+        remote.push(&[&self.refname], Some(&mut push_options))?;
+        tracing::trace!("pushed local changes to origin/{}", self.refname);
 
         Ok(())
     }
