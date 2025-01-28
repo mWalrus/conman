@@ -251,7 +251,7 @@ impl Repo {
         // TODO:
         // repo.find_remote_branch()?;
 
-        repo.set_upstream("main")?;
+        repo.set_upstream(&STATE.config.upstream.branch)?;
 
         if repo.needs_to_update_head()? {
             repo.update_head()?;
