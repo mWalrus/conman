@@ -8,6 +8,16 @@ pub struct Args {
     pub command: Command,
 }
 
+// FIXME: should we keep editing of config files contained within the repo and
+//        encourage the use of `apply` to apply local changes made within the
+//        repo to disk? If we don't, then we would have to create a new command
+//        for collecting changes made on disk. This might still be relevant even
+//        if we opt for the "make local changes and apply" solution, but, then again,
+//        we can't hold the user's hand every step of the way. Some reading comprehension
+//        is required/expected.
+
+// FIXME: additional commands
+//            - create-config (or something like that)
 #[derive(Subcommand, Debug)]
 pub enum Command {
     #[command(about = "clones the repository from upstream (does nothing if already cloned)")]
