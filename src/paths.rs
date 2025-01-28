@@ -2,6 +2,7 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use directories::BaseDirs;
+use tracing::instrument;
 use url_parse::core::Parser;
 
 use crate::config::Config;
@@ -17,6 +18,7 @@ pub struct Paths {
 }
 
 impl Paths {
+    #[instrument(skip(config))]
     pub fn new(config: &Config) -> Result<Self> {
         // NOTE: if either of the below fallible operations fail, something unrelated to conman
         //       is wrong and we have to panic

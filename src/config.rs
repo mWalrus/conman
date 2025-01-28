@@ -4,6 +4,7 @@ use crate::paths::APPLICATION_NAME;
 use anyhow::Result;
 use directories::BaseDirs;
 use serde::{Deserialize, Deserializer, Serialize};
+use tracing::instrument;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -30,6 +31,7 @@ fn default_branch() -> String {
 }
 
 impl Config {
+    #[instrument]
     pub fn read() -> Result<Self> {
         let base_dirs = BaseDirs::new().unwrap();
 
@@ -52,6 +54,7 @@ impl Config {
     }
 }
 
+#[instrument(skip(de))]
 fn path_resolver<'de, D>(de: D) -> Result<Option<PathBuf>, D::Error>
 where
     D: Deserializer<'de>,

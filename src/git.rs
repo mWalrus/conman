@@ -8,6 +8,7 @@ use git2::{
     AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
     PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status, StatusOptions, Statuses,
 };
+use tracing::instrument;
 
 use crate::{file::FileManager, paths::METADATA_FILE_NAME, state::STATE};
 
@@ -16,12 +17,14 @@ pub struct Repo {
     refname: String,
 }
 
+#[derive(Debug)]
 struct StatusEntry {
     status: StatusUpdate,
     old: Option<PathBuf>,
     new: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 enum StatusUpdate {
     New,
     Modified,
@@ -47,9 +50,8 @@ impl std::fmt::Display for StatusUpdate {
 // 1. we need to inform the user if the specified branch doesn't exist upstream
 //    and let them create the branch locally
 impl Repo {
+    #[instrument]
     pub fn open() -> Result<Self> {
-        let _span = tracing::trace_span!("open").entered();
-
         let repo_path = &*STATE.paths.repo;
 
         tracing::trace!(path=?repo_path, "attempting to open repo");
@@ -72,6 +74,7 @@ impl Repo {
         Ok(repo)
     }
 
+    #[instrument(skip(repo))]
     fn new_internal(repo: Repository) -> Self {
         let refname = format!("refs/heads/{}", STATE.config.upstream.branch);
         tracing::trace!("refname set to {refname}");
@@ -82,9 +85,8 @@ impl Repo {
         }
     }
 
+    #[instrument(skip(self))]
     fn needs_to_update_head(&self) -> Result<bool> {
-        let _span = tracing::trace_span!("needs_to_update_head").entered();
-
         let head = self.inner.find_reference("HEAD")?;
         let needs_update = head
             .symbolic_target()
@@ -96,9 +98,8 @@ impl Repo {
         Ok(needs_update)
     }
 
+    #[instrument(skip(self))]
     fn update_head(&self) -> Result<()> {
-        let _span = tracing::trace_span!("update_head").entered();
-
         match self.inner.find_reference(&self.refname) {
             Ok(reference) => {
                 let name = match reference.name() {
@@ -151,9 +152,8 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn set_upstream(&self, branch_name: &str) -> Result<()> {
-        let _span = tracing::trace_span!("set_upstream").entered();
-
         let mut branch = self
             .inner
             .find_branch(branch_name, git2::BranchType::Local)?;
@@ -166,9 +166,8 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn make_initial_commit(&self) -> Result<()> {
-        let _span = tracing::trace_span!("make_initial_commit").entered();
-
         let reference = self.inner.find_reference("HEAD")?;
         let reference = reference.symbolic_target();
         tracing::trace!(ref=?reference, "found reference to HEAD");
@@ -192,6 +191,7 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument]
     fn credentials(
         _url: &str,
         username_from_url: Option<&str>,
@@ -214,9 +214,8 @@ impl Repo {
         }
     }
 
+    #[instrument]
     pub fn clone() -> Result<()> {
-        let _span = tracing::trace_span!("clone").entered();
-
         let repo_path = &*STATE.paths.repo;
 
         if let Ok(true) = std::fs::exists(&repo_path) {
@@ -261,21 +260,9 @@ impl Repo {
         Ok(())
     }
 
-    // FIXME: we want to be able to discover the remote's branch name in order to set the upstream
-    // fn find_remote_branch(&self) -> Result<()> {
-    //     let mut remote = self.inner.find_remote("origin")?;
-    //     let connection =
-    //         remote.connect_auth(git2::Direction::Fetch, Some(Self::remote_callbacks()), None)?;
-    //     let remote_branch = connection.default_branch()?;
-    //     let branch = remote_branch.as_str().unwrap();
-    //     println!("found remote branch for origin: {branch}");
-    //     Ok(())
-    // }
-
     /// Add a file from your local system to be managed by conman
+    #[instrument(skip(self))]
     pub fn add(&self, source: PathBuf, encrypt: bool) -> Result<()> {
-        let _span = tracing::trace_span!("add").entered();
-
         let source_path = std::fs::canonicalize(source)?;
 
         tracing::trace!(source=?source_path, "canonicalized source path");
@@ -297,8 +284,8 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn list(&self) -> Result<()> {
-        let _span = tracing::trace_span!("list").entered();
         tracing::trace!("listing managed files");
 
         let file_manager = FileManager::new()?;
@@ -327,17 +314,16 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn remove(&self, path: PathBuf) -> Result<()> {
-        let _span = tracing::trace_span!("remove").entered();
         tracing::trace!(to_remove=?path, "removing managed file");
         let mut file_manager = FileManager::new()?;
         file_manager.remove(&path)?;
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn save(&mut self) -> Result<()> {
-        let _span = tracing::trace_span!("save").entered();
-
         let mut index = self.inner.index()?;
 
         // FIXME: fetch status updates here before pushing so that we can construct a more descriptive commit message below
@@ -376,9 +362,8 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(remote = remote.name()))]
     fn fetch<'r>(&'r self, refs: &[&str], remote: &'r mut Remote) -> Result<AnnotatedCommit<'r>> {
-        let _span = tracing::trace_span!("fetch").entered();
-
         // FIXME: add callbacks to report progress
         let mut remote_callbacks = RemoteCallbacks::new();
         remote_callbacks.credentials(Self::credentials);
@@ -404,9 +389,8 @@ impl Repo {
         Ok(fetch_commit)
     }
 
+    #[instrument(skip(self), fields(fetch_commit = ?fetch_commit.id()))]
     fn merge<'r>(&'r self, remote_branch: &str, fetch_commit: AnnotatedCommit<'r>) -> Result<()> {
-        let _span = tracing::trace_span!("merge").entered();
-
         let analysis = self.inner.merge_analysis(&[&fetch_commit])?;
         match analysis.0 {
             MergeAnalysis::ANALYSIS_FASTFORWARD => {
@@ -463,13 +447,12 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(remote_reference = remote_reference.name(), remote_commit = ?remote_commit.id()))]
     fn fast_forward<'r>(
         &'r self,
         remote_reference: &mut Reference<'r>,
         remote_commit: AnnotatedCommit<'r>,
     ) -> Result<()> {
-        let _span = tracing::trace_span!("fast_forward").entered();
-
         let name = match remote_reference.name() {
             Some(name) => name.to_string(),
             None => String::from_utf8_lossy(remote_reference.name_bytes()).to_string(),
@@ -492,13 +475,12 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(head_commit = ?head_commit.id(), fetch_commit = ?fetch_commit.id()))]
     fn normal_merge<'r>(
         &'r self,
         head_commit: AnnotatedCommit<'r>,
         fetch_commit: AnnotatedCommit<'r>,
     ) -> Result<()> {
-        let _span = tracing::trace_span!("normal merge").entered();
-
         let local_id = head_commit.id();
         let remote_id = fetch_commit.id();
 
@@ -549,9 +531,8 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn pull(&self) -> Result<()> {
-        let _span = tracing::trace_span!("pull").entered();
-
         if self.check_has_unsaved()? {
             return Ok(());
         }
@@ -568,9 +549,8 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn status(&self) -> Result<()> {
-        let _span = tracing::trace_span!("status").entered();
-
         let entries = self.status_entries()?;
 
         if !self.has_changes(&entries)? {
@@ -600,9 +580,8 @@ impl Repo {
         }
     }
 
+    #[instrument(skip(self))]
     fn status_entries(&self) -> Result<Statuses<'_>> {
-        let _span = tracing::trace_span!("status_entries").entered();
-
         let mut status_options = StatusOptions::new();
         status_options.include_untracked(true);
 
@@ -612,9 +591,8 @@ impl Repo {
         Ok(status_entries)
     }
 
+    #[instrument(skip(self, entries), fields(has_changes))]
     fn has_changes(&self, entries: &Statuses<'_>) -> Result<bool> {
-        let _span = tracing::trace_span!("has_changes").entered();
-
         let has_changes = entries.iter().any(|entry| {
             entry.status().intersects(
                 Status::WT_NEW
@@ -625,14 +603,13 @@ impl Repo {
             )
         });
 
-        tracing::trace!("has changes: {has_changes}");
+        tracing::Span::current().record("has_changes", has_changes);
 
         Ok(has_changes)
     }
 
+    #[instrument(skip(self, entries))]
     fn prepare_status_updates(&self, entries: Statuses<'_>) -> Result<Vec<StatusEntry>> {
-        let _span = tracing::trace_span!("prepare_status_entries").entered();
-
         let mut status_updates = Vec::with_capacity(entries.len());
 
         for status_entry in entries.iter() {
@@ -674,9 +651,8 @@ impl Repo {
         Ok(status_updates)
     }
 
+    #[instrument(skip(self))]
     fn check_has_unsaved(&self) -> Result<bool> {
-        let _span = tracing::trace_span!("check_has_unsaved").entered();
-
         let status_entries = self.status_entries()?;
         if self.has_changes(&status_entries)? {
             println!(
@@ -690,9 +666,8 @@ impl Repo {
         Ok(false)
     }
 
+    #[instrument(skip(self))]
     pub fn apply(&self, ask: bool) -> Result<()> {
-        let _span = tracing::trace_span!("apply").entered();
-
         if self.check_has_unsaved()? {
             return Ok(());
         }
@@ -723,9 +698,8 @@ impl Repo {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn push(&self) -> Result<()> {
-        let _span = tracing::trace_span!("push").entered();
-
         if self.check_has_unsaved()? {
             return Ok(());
         }

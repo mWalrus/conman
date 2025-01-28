@@ -1,6 +1,7 @@
 use std::sync::LazyLock;
 
 use anyhow::Result;
+use tracing::instrument;
 
 use crate::{config::Config, paths::Paths};
 
@@ -14,6 +15,7 @@ pub struct State {
 }
 
 impl State {
+    #[instrument]
     pub fn new() -> Result<Self> {
         let config = Config::read()?;
         let paths = Paths::new(&config)?;
