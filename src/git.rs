@@ -14,7 +14,6 @@ use crate::{file::FileManager, paths::METADATA_FILE_NAME, state::STATE};
 
 pub struct Repo {
     inner: Repository,
-    refname: String,
 }
 
 #[derive(Debug)]
@@ -58,7 +57,7 @@ impl Repo {
         let repo = Repository::open(&repo_path).unwrap();
         tracing::trace!(path=?repo_path, "opened repo");
 
-        let repo = Self::new_internal(repo);
+        let mut repo = Self::new_internal(repo);
 
         // FIXME: if a user defines a config branch and applies it to their system
         //        and then switches to another config branch and applies that, what
@@ -67,89 +66,33 @@ impl Repo {
         //        Do we want to remove applied files from the user's system or do
         //        we simply warn when we detect a branch switch that has differences
         //        in managed files?
-        if repo.needs_to_update_head()? {
-            repo.update_head()?;
+        let branch = &STATE.config.upstream.branch;
+        if !repo.head_matches(branch)? {
+            repo.checkout(branch)?;
+            repo.set_upstream(branch)?;
         }
 
         Ok(repo)
     }
 
-    #[instrument(skip(repo))]
+    #[inline(always)]
     fn new_internal(repo: Repository) -> Self {
-        let refname = format!("refs/heads/{}", STATE.config.upstream.branch);
-        tracing::trace!("refname set to {refname}");
-
-        Self {
-            inner: repo,
-            refname,
-        }
+        Self { inner: repo }
     }
 
     #[instrument(skip(self))]
-    fn needs_to_update_head(&self) -> Result<bool> {
+    fn head_matches(&self, branch_name: &str) -> Result<bool> {
+        let refname = format!("refs/heads/{branch_name}");
+
         let head = self.inner.find_reference("HEAD")?;
-        let needs_update = head
+        let head_matches = head
             .symbolic_target()
-            .map(|r| !r.eq(&self.refname))
+            .map(|r| r.eq(&refname))
             .unwrap_or(false);
 
-        tracing::trace!(head=?head.symbolic_target(), ref=self.refname ,"update head?: {needs_update}");
+        tracing::trace!("head matches: {head_matches}");
 
-        Ok(needs_update)
-    }
-
-    #[instrument(skip(self))]
-    fn update_head(&self) -> Result<()> {
-        match self.inner.find_reference(&self.refname) {
-            Ok(reference) => {
-                let name = match reference.name() {
-                    Some(name) => name.to_string(),
-                    None => String::from_utf8_lossy(reference.name_bytes()).to_string(),
-                };
-
-                tracing::trace!(
-                    refname = self.refname,
-                    resolved_name = name,
-                    "found reference with name"
-                );
-
-                self.inner.set_head(&name)?;
-                tracing::trace!("set head to {name}");
-                self.inner
-                    .checkout_head(Some(CheckoutBuilder::default().force()))?;
-                tracing::trace!("checked out new head");
-            }
-            Err(_) => {
-                let head = self.inner.find_reference("HEAD")?;
-                let head_commit = head.peel_to_commit()?;
-
-                tracing::trace!(id=?head_commit.id(), "found head commit");
-                self.inner.reference(
-                    &self.refname,
-                    head_commit.id(),
-                    true,
-                    &format!(
-                        "setting {} to {}",
-                        STATE.config.upstream.branch,
-                        head_commit.id()
-                    ),
-                )?;
-                tracing::trace!("set ref to point to head commit");
-                self.inner.set_head(&self.refname)?;
-                tracing::trace!("set head to {}", self.refname);
-                self.inner.checkout_head(Some(
-                    CheckoutBuilder::default()
-                        .allow_conflicts(true)
-                        .conflict_style_merge(true)
-                        .force(),
-                ))?;
-                tracing::trace!("checked out new head");
-            }
-        };
-
-        self.set_upstream(&STATE.config.upstream.branch)?;
-
-        Ok(())
+        Ok(head_matches)
     }
 
     #[instrument(skip(self))]
@@ -240,20 +183,72 @@ impl Repo {
 
         let repo_is_empty = repo.is_empty()?;
 
-        let repo = Self::new_internal(repo);
+        let mut repo = Self::new_internal(repo);
 
         if repo_is_empty {
+            let branch = crate::config::default_branch();
             repo.make_initial_commit()?;
+            repo.checkout(&branch)?;
+            repo.set_upstream(&branch)?;
+            repo.push(Some(&branch))?;
         }
 
-        // TODO:
-        // repo.find_remote_branch()?;
-
+        repo.checkout(&STATE.config.upstream.branch)?;
         repo.set_upstream(&STATE.config.upstream.branch)?;
 
-        if repo.needs_to_update_head()? {
-            repo.update_head()?;
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    fn checkout(&mut self, branch_name: &str) -> Result<()> {
+        if self.head_matches(branch_name)? {
+            return Ok(());
         }
+
+        let refname = format!("refs/heads/{branch_name}");
+
+        let refname = match self.inner.find_reference(&refname) {
+            Ok(reference) => {
+                let name = match reference.name() {
+                    Some(name) => name.to_string(),
+                    None => String::from_utf8_lossy(reference.name_bytes()).to_string(),
+                };
+
+                tracing::trace!(
+                    refname = refname,
+                    resolved_name = name,
+                    "found reference with name"
+                );
+
+                name
+            }
+            Err(_) => {
+                let head = self.inner.find_reference("HEAD")?;
+                let head_commit = head.peel_to_commit()?;
+
+                tracing::trace!(id=?head_commit.id(), "found head commit");
+                self.inner.reference(
+                    &refname,
+                    head_commit.id(),
+                    true,
+                    &format!("setting {} to {}", branch_name, head_commit.id()),
+                )?;
+                tracing::trace!("set ref to point to head commit");
+                refname
+            }
+        };
+
+        self.inner.set_head(&refname)?;
+        tracing::trace!("set head to {refname}");
+
+        self.inner.checkout_head(Some(
+            CheckoutBuilder::default()
+                .allow_conflicts(true)
+                .conflict_style_merge(true)
+                .force(),
+        ))?;
+
+        tracing::trace!("checked out new head");
 
         Ok(())
     }
@@ -697,7 +692,9 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    pub fn push(&self) -> Result<()> {
+    pub fn push(&self, override_branch: Option<&str>) -> Result<()> {
+        let branch_name = override_branch.unwrap_or(&STATE.config.upstream.branch);
+
         if self.check_has_unsaved()? {
             return Ok(());
         }
@@ -723,8 +720,9 @@ impl Repo {
         let mut remote = self.inner.find_remote("origin")?;
         tracing::trace!("found remote origin");
 
-        remote.push(&[&self.refname], Some(&mut push_options))?;
-        tracing::trace!("pushed local changes to origin/{}", self.refname);
+        let refspec = format!("refs/heads/{branch_name}");
+        remote.push(&[refspec], Some(&mut push_options))?;
+        tracing::trace!("pushed local changes to origin/{branch_name}",);
 
         Ok(())
     }

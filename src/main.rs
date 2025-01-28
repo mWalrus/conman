@@ -29,7 +29,7 @@ fn main() {
         Command::Edit { path, dont_save } => {}
         Command::Save => Repo::open().unwrap().save().unwrap(),
         Command::Push => {
-            Repo::open().unwrap().push().unwrap();
+            Repo::open().unwrap().push(None).unwrap();
         }
         Command::Pull => {
             Repo::open().unwrap().pull().unwrap();

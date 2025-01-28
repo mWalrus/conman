@@ -26,7 +26,8 @@ pub struct UpstreamConfig {
     pub branch: String,
 }
 
-fn default_branch() -> String {
+#[inline(always)]
+pub fn default_branch() -> String {
     "main".into()
 }
 
