@@ -667,7 +667,7 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    pub fn apply(&self, ask: bool) -> Result<()> {
+    pub fn apply(&self, no_confirm: bool) -> Result<()> {
         if self.check_has_unsaved()? {
             return Ok(());
         }
@@ -685,7 +685,7 @@ impl Repo {
 
         for (repo_path, metadata) in zipped {
             tracing::trace!(repo_path=?repo_path, disk_path=?metadata.path, encrypted=metadata.encrypted, "handling file");
-            if ask {
+            if !no_confirm {
                 let prompt = format!("Do you want to apply '{}'", metadata.path.display());
                 if let Ok(false) = Confirm::new().with_prompt(prompt).interact() {
                     continue;

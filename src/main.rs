@@ -43,8 +43,8 @@ fn main() {
         Command::List => {
             Repo::open().unwrap().list().unwrap();
         }
-        Command::Apply { ask } => {
-            Repo::open().unwrap().apply(ask).unwrap();
+        Command::Apply { no_confirm } => {
+            Repo::open().unwrap().apply(no_confirm).unwrap();
         }
     }
 }

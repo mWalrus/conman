@@ -55,9 +55,9 @@ pub enum Command {
     Apply {
         #[arg(
             long,
-            help = "ask for confirmation to apply before applying each file",
+            help = "skip asking for confirmation before applying each file",
             required = false
         )]
-        ask: bool,
+        no_confirm: bool,
     },
 }
