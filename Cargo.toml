@@ -2,7 +2,7 @@
 name = "conman"
 version = "0.1.0"
 edition = "2021"
-description = "manager your dotfiles securely using git"
+description = "manage your dotfiles securely using git"
 
 [dependencies]
 anyhow = "1.0.95"
