@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Result;
 use directories::BaseDirs;
@@ -45,8 +49,15 @@ impl Paths {
         })
     }
 
-    pub fn repo_local_file_path(&self, on_disk_path: &PathBuf) -> PathBuf {
-        let file_name = on_disk_path.file_name().unwrap();
-        self.repo.join(file_name)
+    pub fn repo_local_file_path(&self, on_disk_path: &PathBuf) -> Result<PathBuf> {
+        let file_name = on_disk_path.file_name().unwrap().to_string_lossy();
+
+        let start = SystemTime::now();
+        let timestamp = start.duration_since(UNIX_EPOCH)?.as_secs();
+
+        let name = format!("{timestamp}-{file_name}");
+
+        let path = self.repo.join(name);
+        Ok(path)
     }
 }

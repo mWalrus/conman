@@ -269,9 +269,9 @@ impl Repo {
             return Ok(());
         }
 
-        let destination_path = STATE.paths.repo_local_file_path(&source_path);
+        let destination_path = STATE.paths.repo_local_file_path(&source_path)?;
 
-        file_manager.copy(&source_path, &destination_path, encrypt)?;
+        file_manager.copy(source_path, destination_path, encrypt)?;
         tracing::trace!("done adding file");
 
         Ok(())
@@ -300,7 +300,7 @@ impl Repo {
             println!(
                 "  {}: {}",
                 "Path".bold(),
-                file.path.display().to_string().underline()
+                file.system_path.display().to_string().underline()
             );
             println!("  {}: {}", "Encrypted".bold(), encrypted_text);
         }
@@ -671,21 +671,21 @@ impl Repo {
         let zipped = metadata
             .iter()
             .map(|metadata| {
-                let file_name = metadata.path.file_name().unwrap();
+                let file_name = metadata.system_path.file_name().unwrap();
                 STATE.paths.repo.join(file_name)
             })
             .zip(metadata.iter());
 
         for (repo_path, metadata) in zipped {
-            tracing::trace!(repo_path=?repo_path, disk_path=?metadata.path, encrypted=metadata.encrypted, "handling file");
+            tracing::trace!(repo_path=?repo_path, disk_path=?metadata.system_path, encrypted=metadata.encrypted, "handling file");
             if !no_confirm {
-                let prompt = format!("Do you want to apply '{}'", metadata.path.display());
+                let prompt = format!("Do you want to apply '{}'", metadata.system_path.display());
                 if let Ok(false) = Confirm::new().with_prompt(prompt).interact() {
                     continue;
                 }
             }
-            std::fs::copy(&repo_path, &metadata.path)?;
-            tracing::trace!(from=?repo_path, to=?metadata.path, "copied file");
+            std::fs::copy(&repo_path, &metadata.system_path)?;
+            tracing::trace!(from=?repo_path, to=?metadata.system_path, "copied file");
         }
 
         Ok(())

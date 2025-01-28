@@ -13,7 +13,8 @@ use crate::state::STATE;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileMetadata {
-    pub path: PathBuf,
+    pub system_path: PathBuf,
+    pub repo_path: PathBuf,
     pub encrypted: bool,
 }
 
@@ -62,34 +63,36 @@ impl FileManager {
 
     /// copy the file at `from` into `to`
     #[instrument(skip(self))]
-    pub fn copy(&mut self, from: &PathBuf, to: &PathBuf, encrypt: bool) -> Result<()> {
+    pub fn copy(&mut self, from: PathBuf, to: PathBuf, encrypt: bool) -> Result<()> {
         if encrypt {
             let passphrase = STATE.config.encryption.passphrase.clone();
             let encryptor = Self::init_encryptor(passphrase);
-            self.copy_encrypted(encryptor, from, to)?;
+            self.copy_encrypted(encryptor, &from, &to)?;
         } else {
-            self.copy_unencrypted(from, to)?;
+            self.copy_unencrypted(&from, &to)?;
         }
-        self.manage_new_file(from, encrypt);
+        self.manage_new_file(from, to, encrypt)?;
         self.persist_metadata()?;
         Ok(())
     }
 
     /// add metadata about the newly added file to the conman store
     #[instrument(skip(self))]
-    fn manage_new_file(&mut self, from: &PathBuf, encrypt: bool) {
+    fn manage_new_file(&mut self, from: PathBuf, to: PathBuf, encrypt: bool) -> Result<()> {
         let new_metadata = FileMetadata {
-            path: from.clone(),
+            system_path: from,
+            repo_path: to,
             encrypted: encrypt,
         };
         self.metadata.metadata.push(new_metadata);
+        Ok(())
     }
 
     /// check whether the source path is already managed by conman
     #[instrument(skip(self))]
     pub fn is_already_managed(&self, from: &PathBuf) -> bool {
         for managed_file in self.metadata.metadata.iter() {
-            if managed_file.path.eq(from) {
+            if managed_file.system_path.eq(from) {
                 return true;
             }
         }
@@ -153,7 +156,7 @@ impl FileManager {
             .metadata
             .metadata
             .iter()
-            .position(|managed_file| managed_file.path.eq(path));
+            .position(|managed_file| managed_file.system_path.eq(path));
 
         let Some(index) = maybe_index else {
             return Ok(());
@@ -165,10 +168,7 @@ impl FileManager {
         tracing::trace!(remaining = ?self.metadata.metadata, "removed file metadata");
 
         // remove the file from the local git repo
-        let repo_local_path_to_removed_file =
-            STATE.paths.repo_local_file_path(&removed_metadata.path);
-
-        std::fs::remove_file(repo_local_path_to_removed_file)?;
+        std::fs::remove_file(&removed_metadata.repo_path)?;
         tracing::trace!("removed file from repo");
 
         self.persist_metadata()?;
