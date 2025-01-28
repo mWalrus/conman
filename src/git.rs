@@ -191,7 +191,7 @@ impl Repo {
         Ok(())
     }
 
-    #[instrument]
+    #[instrument(skip(_url, username_from_url, _allowed_types))]
     fn credentials(
         _url: &str,
         username_from_url: Option<&str>,
