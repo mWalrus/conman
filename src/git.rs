@@ -197,8 +197,6 @@ impl Repo {
         username_from_url: Option<&str>,
         _allowed_types: CredentialType,
     ) -> Result<Cred, Error> {
-        let span = tracing::trace_span!("remote_callbacks");
-        let _enter = span.enter();
         let username = username_from_url.unwrap();
 
         if let Some(key) = STATE.config.upstream.key_file.as_ref() {
