@@ -8,8 +8,7 @@ use url_parse::core::Parser;
 use crate::config::Config;
 
 pub(crate) const APPLICATION_NAME: &str = "conman";
-// FIXME: rename metadata file to something like _conman_internal_metadata.toml
-pub(crate) const METADATA_FILE_NAME: &str = "metadata.toml";
+pub(crate) const METADATA_FILE_NAME: &str = "_conman_internal_metadata.toml";
 
 pub struct Paths {
     pub repo: PathBuf,
