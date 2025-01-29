@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use colored::Colorize;
-use dialoguer::{theme::ColorfulTheme, Confirm, FuzzySelect};
+use dialoguer::{theme::ColorfulTheme, Confirm};
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
@@ -680,7 +680,10 @@ impl Repo {
             tracing::trace!(repo_path=?repo_path, disk_path=?metadata.system_path, encrypted=metadata.encrypted, "handling file");
             if !no_confirm {
                 let prompt = format!("Do you want to apply '{}'", metadata.system_path.display());
-                if let Ok(false) = Confirm::new().with_prompt(prompt).interact() {
+                if let Ok(false) = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt(prompt)
+                    .interact()
+                {
                     continue;
                 }
             }
@@ -727,54 +730,9 @@ impl Repo {
         Ok(())
     }
 
-    #[instrument(skip(self))]
-    pub fn edit(&mut self, path: Option<PathBuf>, save: bool, apply: bool) -> Result<()> {
-        let file_manager = FileManager::new()?;
-        let metadata = file_manager.metadata();
-
-        let file_path = match path {
-            Some(path) => path,
-            None => {
-                let theme = ColorfulTheme::default();
-                let mut fuzzy_select = FuzzySelect::with_theme(&theme)
-                    .default(0)
-                    .with_prompt("Search for a file to edit");
-
-                for file in metadata.iter() {
-                    fuzzy_select = fuzzy_select.item(file.system_path.to_string_lossy());
-                }
-
-                let selected_index = fuzzy_select.interact()?;
-
-                let selected = metadata
-                    .get(selected_index)
-                    .expect("failed to find just selected item somehow");
-
-                PathBuf::from(&selected.system_path)
-            }
-        };
-
-        tracing::trace!("got selected file path: {file_path:?}");
-
-        let file = metadata
-            .iter()
-            .find(|file| file.system_path.eq(&file_path))
-            .unwrap();
-
-        tracing::trace!("found file with system path");
-
-        edit::edit_file(&file.repo_path)?;
-
-        tracing::trace!("user done editing");
-
-        if save {
-            self.save()?;
-        }
-
-        if apply {
-            self.apply(false)?;
-        }
-
+    #[instrument(skip(self, path, skip_update))]
+    pub fn edit(&self, path: Option<PathBuf>, skip_update: bool) -> Result<()> {
+        FileManager::new()?.edit_managed_file(path, skip_update)?;
         Ok(())
     }
 }

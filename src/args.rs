@@ -34,10 +34,13 @@ pub enum Command {
     Edit {
         #[arg(help = "relative or absolute path to file")]
         path: Option<PathBuf>,
-        #[arg(short, long, help = "save on exit", required = false)]
-        save: bool,
-        #[arg(short, long, help = "apply on exit", required = false)]
-        apply: bool,
+        #[arg(
+            short,
+            long,
+            help = "skip copying any changes made into the conman repo",
+            required = false
+        )]
+        skip_update: bool,
     },
     #[command(about = "save any unsaved changes")] // gather all files + commit
     Save,

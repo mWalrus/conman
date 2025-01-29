@@ -6,6 +6,7 @@ use std::{
 
 use age::{secrecy::SecretString, Encryptor};
 use anyhow::Result;
+use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::instrument;
 
@@ -62,6 +63,67 @@ impl FileManager {
     fn init_encryptor(secret: String) -> Encryptor {
         let passphrase = SecretString::from(secret);
         Encryptor::with_user_passphrase(passphrase)
+    }
+
+    #[instrument(skip(self))]
+    pub fn edit_managed_file(&self, path: Option<PathBuf>, skip_update: bool) -> Result<()> {
+        let file_path = match path {
+            Some(path) => path,
+            None => {
+                let theme = ColorfulTheme::default();
+                let mut fuzzy_select = FuzzySelect::with_theme(&theme)
+                    .default(0)
+                    .with_prompt("Search for a file to edit");
+
+                for file in self.metadata.metadata.iter() {
+                    fuzzy_select = fuzzy_select.item(file.system_path.to_string_lossy());
+                }
+
+                let selected_index = fuzzy_select.interact()?;
+
+                let selected = self
+                    .metadata
+                    .metadata
+                    .get(selected_index)
+                    .expect("failed to find just selected item somehow");
+
+                PathBuf::from(&selected.system_path)
+            }
+        };
+
+        tracing::trace!("got selected file path: {file_path:?}");
+
+        let file_metadata = self
+            .metadata
+            .metadata
+            .iter()
+            .find(|file| file.system_path.eq(&file_path))
+            .unwrap();
+
+        tracing::trace!("found file with system path");
+
+        edit::edit_file(&file_metadata.system_path)?;
+
+        tracing::trace!("user done editing");
+
+        if skip_update {
+            tracing::trace!("skipping updating internal copy of the file");
+            return Ok(());
+        }
+
+        tracing::trace!("preparing to copy file contents");
+        if file_metadata.encrypted {
+            let passphrase = STATE.config.encryption.passphrase.clone();
+            let encryptor = Self::init_encryptor(passphrase);
+            self.copy_encrypted(
+                encryptor,
+                &file_metadata.system_path,
+                &file_metadata.repo_path,
+            )?;
+        } else {
+            self.copy_unencrypted(&file_metadata.system_path, &file_metadata.repo_path)?;
+        }
+        Ok(())
     }
 
     /// copy the file at `from` into `to`
