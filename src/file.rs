@@ -65,7 +65,7 @@ impl FileManager {
         Encryptor::with_user_passphrase(passphrase)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), fields(source_was_updated))]
     pub fn edit_managed_file(&self, path: Option<PathBuf>, skip_update: bool) -> Result<()> {
         let file_path = match path {
             Some(path) => path,
@@ -111,6 +111,15 @@ impl FileManager {
             return Ok(());
         }
 
+        let source_was_updated =
+            self.source_was_updated(&file_metadata.system_path, &file_metadata.repo_path)?;
+        tracing::Span::current().record("source_was_updated", source_was_updated);
+
+        if !source_was_updated {
+            tracing::trace!("skipping copy of identical files");
+            return Ok(());
+        }
+
         tracing::trace!("preparing to copy file contents");
         if file_metadata.encrypted {
             let passphrase = STATE.config.encryption.passphrase.clone();
@@ -124,6 +133,35 @@ impl FileManager {
             self.copy_unencrypted(&file_metadata.system_path, &file_metadata.repo_path)?;
         }
         Ok(())
+    }
+
+    /// Compares two files' metadata to check for differences
+    #[instrument(skip(self, source, dest))]
+    fn source_was_updated(&self, source: &PathBuf, dest: &PathBuf) -> Result<bool> {
+        let source_metadata = std::fs::metadata(source)?;
+        let dest_metadata = std::fs::metadata(dest)?;
+
+        tracing::trace!(
+            source = source_metadata.len(),
+            dest = dest_metadata.len(),
+            "measuring file sizes"
+        );
+        if source_metadata.len() != dest_metadata.len() {
+            tracing::trace!("lengths do not match; files differ");
+            return Ok(true);
+        }
+
+        let source_modified = source_metadata.modified()?;
+        let dest_modified = dest_metadata.modified()?;
+
+        tracing::trace!("checking modified time");
+        if source_modified > dest_modified {
+            tracing::trace!("source file was updated more recently");
+            return Ok(true);
+        }
+
+        tracing::trace!("destination file is up-to-date");
+        Ok(false)
     }
 
     /// copy the file at `from` into `to`
