@@ -6,14 +6,22 @@ use std::{
 
 use age::{secrecy::SecretString, Encryptor};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::instrument;
 
 use crate::state::STATE;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileMetadata {
+    #[serde(
+        deserialize_with = "deserialize_system_path",
+        serialize_with = "serialize_system_path"
+    )]
     pub system_path: PathBuf,
+    #[serde(
+        deserialize_with = "deserialize_system_path",
+        serialize_with = "serialize_system_path"
+    )]
     pub repo_path: PathBuf,
     pub encrypted: bool,
 }
@@ -177,4 +185,38 @@ impl FileManager {
 
         Ok(())
     }
+}
+
+const USER_HOME_AMBIGUATION: &str = "__user_home__";
+
+#[instrument(skip(de))]
+fn deserialize_system_path<'de, D>(de: D) -> Result<PathBuf, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut path_string = String::deserialize(de)?;
+
+    if path_string.starts_with(USER_HOME_AMBIGUATION) {
+        let user_home = shellexpand::env("$HOME").unwrap();
+        path_string = path_string.replace(USER_HOME_AMBIGUATION, &user_home);
+    }
+
+    let path = PathBuf::from(path_string);
+
+    Ok(path)
+}
+
+fn serialize_system_path<S>(path: &PathBuf, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut path_string = path.to_string_lossy().to_string();
+
+    let user_home = shellexpand::env("$HOME").unwrap().to_string();
+
+    if path_string.starts_with(&user_home) {
+        path_string = path_string.replace(&user_home, USER_HOME_AMBIGUATION);
+    }
+
+    ser.serialize_str(&path_string)
 }

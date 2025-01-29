@@ -73,6 +73,7 @@ where
         return Ok(None);
     };
 
+    // FIXME: allow for expansion with env as well in order to support $HOME prefix
     let expanded_path = shellexpand::tilde(unresolved_path_as_str);
     tracing::trace!(expanded_path = ?expanded_path, "expanded key file path");
 
