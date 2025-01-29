@@ -12,7 +12,7 @@ use tracing::instrument;
 
 use crate::state::STATE;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct FileMetadata {
     #[serde(
         deserialize_with = "deserialize_metadata_path",
@@ -121,17 +121,52 @@ impl FileManager {
         }
 
         tracing::trace!("preparing to copy file contents");
-        if file_metadata.encrypted {
+        self.copy_managed_file(file_metadata)?;
+        Ok(())
+    }
+
+    fn copy_managed_file(&self, metadata: &FileMetadata) -> Result<()> {
+        if metadata.encrypted {
             let passphrase = STATE.config.encryption.passphrase.clone();
             let encryptor = Self::init_encryptor(passphrase);
-            self.copy_encrypted(
-                encryptor,
-                &file_metadata.system_path,
-                &file_metadata.repo_path,
-            )?;
+            self.copy_encrypted(encryptor, &metadata.system_path, &metadata.repo_path)?;
         } else {
-            self.copy_unencrypted(&file_metadata.system_path, &file_metadata.repo_path)?;
+            self.copy_unencrypted(&metadata.system_path, &metadata.repo_path)?;
         }
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub fn collect(&self, path: Option<PathBuf>, no_confirm: bool) -> Result<()> {
+        let mut file_metadata_collection = self.metadata.metadata.clone();
+        if let Some(p) = path {
+            file_metadata_collection.retain(|fm| fm.system_path.eq(&p));
+        }
+
+        for file in file_metadata_collection.iter() {
+            let source_was_updated = self.source_was_updated(&file.system_path, &file.repo_path)?;
+            if !source_was_updated {
+                tracing::trace!("source in unchanged, skipping");
+                continue;
+            }
+
+            if no_confirm {
+                tracing::trace!("no confirmation needed, copying");
+                self.copy_managed_file(file)?;
+                continue;
+            }
+
+            let message = format!("Collect updated file '{}'?", file.system_path.display());
+            let confirmation = dialoguer::Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(message)
+                .interact()?;
+
+            tracing::trace!("user gave confirmation: {confirmation}");
+            if confirmation {
+                self.copy_managed_file(file)?;
+            }
+        }
+
         Ok(())
     }
 

@@ -76,4 +76,14 @@ pub enum Command {
         )]
         no_confirm: bool,
     },
+    Collect {
+        #[arg(help = "relative or absolute path to specific file")]
+        path: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "skip asking for confirmation before collecting each file",
+            required = false
+        )]
+        no_confirm: bool,
+    },
 }

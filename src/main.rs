@@ -48,5 +48,8 @@ fn main() {
         Command::Apply { no_confirm } => {
             Repo::open().unwrap().apply(no_confirm).unwrap();
         }
+        Command::Collect { path, no_confirm } => {
+            Repo::open().unwrap().collect(path, no_confirm).unwrap();
+        }
     }
 }

@@ -735,4 +735,10 @@ impl Repo {
         FileManager::new()?.edit_managed_file(path, skip_update)?;
         Ok(())
     }
+
+    #[instrument(skip(self, path, no_confirm))]
+    pub fn collect(&self, path: Option<PathBuf>, no_confirm: bool) -> Result<()> {
+        FileManager::new()?.collect(path, no_confirm)?;
+        Ok(())
+    }
 }
