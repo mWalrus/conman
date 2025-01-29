@@ -26,7 +26,9 @@ fn main() {
         Command::Status => {
             Repo::open().unwrap().status().unwrap();
         }
-        Command::Edit { path, dont_save } => {}
+        Command::Edit { path, save, apply } => {
+            Repo::open().unwrap().edit(path, save, apply).unwrap()
+        }
         Command::Save => Repo::open().unwrap().save().unwrap(),
         Command::Push => {
             Repo::open().unwrap().push(None).unwrap();

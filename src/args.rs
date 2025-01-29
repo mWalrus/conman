@@ -33,9 +33,11 @@ pub enum Command {
     #[command(about = "edit a tracked file")]
     Edit {
         #[arg(help = "relative or absolute path to file")]
-        path: PathBuf,
-        #[arg(short, long, help = "don't save on exit", required = false)]
-        dont_save: bool,
+        path: Option<PathBuf>,
+        #[arg(short, long, help = "save on exit", required = false)]
+        save: bool,
+        #[arg(short, long, help = "apply on exit", required = false)]
+        apply: bool,
     },
     #[command(about = "save any unsaved changes")] // gather all files + commit
     Save,
