@@ -14,13 +14,13 @@ use crate::state::STATE;
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileMetadata {
     #[serde(
-        deserialize_with = "deserialize_system_path",
-        serialize_with = "serialize_system_path"
+        deserialize_with = "deserialize_metadata_path",
+        serialize_with = "serialize_metadata_path"
     )]
     pub system_path: PathBuf,
     #[serde(
-        deserialize_with = "deserialize_system_path",
-        serialize_with = "serialize_system_path"
+        deserialize_with = "deserialize_metadata_path",
+        serialize_with = "serialize_metadata_path"
     )]
     pub repo_path: PathBuf,
     pub encrypted: bool,
@@ -185,7 +185,7 @@ impl FileManager {
 const USER_HOME_AMBIGUATION: &str = "__user_home__";
 
 #[instrument(skip(de))]
-fn deserialize_system_path<'de, D>(de: D) -> Result<PathBuf, D::Error>
+fn deserialize_metadata_path<'de, D>(de: D) -> Result<PathBuf, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -201,7 +201,7 @@ where
     Ok(path)
 }
 
-fn serialize_system_path<S>(path: &PathBuf, ser: S) -> Result<S::Ok, S::Error>
+fn serialize_metadata_path<S>(path: &PathBuf, ser: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
