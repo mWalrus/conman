@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use colored::Colorize;
+use colored::{ColoredString, Colorize};
 use dialoguer::{theme::ColorfulTheme, Confirm};
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
@@ -32,22 +32,28 @@ enum StatusUpdate {
     TypeChange,
 }
 
-impl std::fmt::Display for StatusUpdate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
+impl StatusUpdate {
+    fn into_colored_string(&self) -> ColoredString {
+        match self {
             StatusUpdate::New => "new".green(),
             StatusUpdate::Modified => "modified".yellow(),
             StatusUpdate::Deleted => "deleted".red(),
             StatusUpdate::Renamed => "renamed".magenta(),
             StatusUpdate::TypeChange => "typechange".blue(),
-        };
-        write!(f, "{}", s.bold())
+        }
+    }
+
+    fn to_str(&self) -> &'_ str {
+        match self {
+            StatusUpdate::New => "new",
+            StatusUpdate::Modified => "modified",
+            StatusUpdate::Deleted => "deleted",
+            StatusUpdate::Renamed => "renamed",
+            StatusUpdate::TypeChange => "typechange",
+        }
     }
 }
 
-// TODO:
-// 1. we need to inform the user if the specified branch doesn't exist upstream
-//    and let them create the branch locally
 impl Repo {
     #[instrument]
     pub fn open() -> Result<Self> {
@@ -316,16 +322,48 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
+    fn prepare_commit_message(&self) -> Result<Option<String>> {
+        let statuses = self.status_entries()?;
+
+        if !self.has_changes(&statuses)? {
+            return Ok(None);
+        }
+
+        let status_entries = self.prepare_status_updates(statuses)?;
+
+        // we need this to find the system path of each file
+        let file_manager = FileManager::new()?;
+
+        let mut commit_message = "system-update: updating files\n\n".to_string();
+        let change_count = status_entries.len();
+
+        for (i, entry) in status_entries.into_iter().enumerate() {
+            let file_path = entry.old.or(entry.new).unwrap();
+            let Some(file_path) = file_manager.find_path(&file_path) else {
+                continue;
+            };
+
+            let update = format!(
+                "{}: {}{}",
+                entry.status.to_str(),
+                file_path.display(),
+                if i + 1 == change_count { "" } else { "\n" }
+            );
+
+            commit_message.push_str(&update);
+        }
+        Ok(Some(commit_message))
+    }
+
+    #[instrument(skip(self))]
     pub fn save(&mut self) -> Result<()> {
         let mut index = self.inner.index()?;
 
-        // FIXME: fetch status updates here before pushing so that we can construct a more descriptive commit message below
-        //        Example:
-        //            system-update: updating files
-        //
-        //            new: /path/to/file/with/config.toml
-        //            modified: /path/to/another/file.yml
-        //            deleted: /path/to/the/most/epic/config.cfg
+        let maybe_commit_message = self.prepare_commit_message()?;
+        let Some(commit_message) = maybe_commit_message else {
+            tracing::trace!("nothing changes found, aborting");
+            return Ok(());
+        };
 
         index.add_all(&["."], git2::IndexAddOption::DEFAULT, None)?;
         tracing::trace!("staged all files");
@@ -344,7 +382,7 @@ impl Repo {
             reference,
             &signature,
             &signature,
-            "system-update: updating files",
+            &commit_message,
             &tree,
             &[&parent_commit],
         )?;
@@ -564,10 +602,19 @@ impl Repo {
         for update in updates.iter() {
             match (update.old.as_ref(), update.new.as_ref()) {
                 (Some(old), Some(new)) if old != new => {
-                    println!("{}: {} -> {}", update.status, old.display(), new.display());
+                    println!(
+                        "{}: {} -> {}",
+                        update.status.into_colored_string(),
+                        old.display(),
+                        new.display()
+                    );
                 }
                 (old, new) => {
-                    println!("{}: {}", update.status, old.or(new).unwrap().display())
+                    println!(
+                        "{}: {}",
+                        update.status.into_colored_string(),
+                        old.or(new).unwrap().display()
+                    )
                 }
             }
         }

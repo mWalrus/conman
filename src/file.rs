@@ -315,6 +315,14 @@ impl FileManager {
 
         Ok(())
     }
+
+    pub fn find_path(&self, file_name: &PathBuf) -> Option<&PathBuf> {
+        self.metadata
+            .metadata
+            .iter()
+            .find(|file| file.repo_path.ends_with(file_name.as_os_str()))
+            .map(|file| &file.system_path)
+    }
 }
 
 const USER_HOME_AMBIGUATION: &str = "__user_home__";
