@@ -3,6 +3,7 @@ use clap::Parser;
 use git::Repo;
 
 mod args;
+mod cache;
 mod config;
 mod file;
 mod git;
