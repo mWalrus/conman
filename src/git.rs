@@ -718,6 +718,15 @@ impl Repo {
                     continue;
                 }
             }
+
+            if let Some(parent) = entry.system_path.parent() {
+                if !parent.exists() {
+                    tracing::trace!("parent(s) does not exist");
+                    std::fs::create_dir_all(parent)?;
+                    tracing::trace!("created parent dirs");
+                }
+            }
+
             tracing::trace!("repo path: {}", entry.repo_path.display());
             std::fs::copy(&entry.repo_path, &entry.system_path)?;
             tracing::trace!(from=?entry.repo_path, to=?entry.system_path, "copied file");
