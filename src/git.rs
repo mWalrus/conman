@@ -710,20 +710,11 @@ impl Repo {
         }
 
         let file_manager = FileManager::new()?;
-        let metadata = file_manager.metadata();
 
-        let zipped = metadata
-            .iter()
-            .map(|metadata| {
-                let file_name = metadata.system_path.file_name().unwrap();
-                STATE.paths.repo.join(file_name)
-            })
-            .zip(metadata.iter());
-
-        for (repo_path, metadata) in zipped {
-            tracing::trace!(repo_path=?repo_path, disk_path=?metadata.system_path, encrypted=metadata.encrypted, "handling file");
+        for entry in file_manager.metadata() {
+            tracing::trace!(entry=?entry ,"handling file");
             if !no_confirm {
-                let prompt = format!("Do you want to apply '{}'", metadata.system_path.display());
+                let prompt = format!("Do you want to apply '{}'", entry.system_path.display());
                 if let Ok(false) = Confirm::with_theme(&ColorfulTheme::default())
                     .with_prompt(prompt)
                     .interact()
@@ -731,8 +722,9 @@ impl Repo {
                     continue;
                 }
             }
-            std::fs::copy(&repo_path, &metadata.system_path)?;
-            tracing::trace!(from=?repo_path, to=?metadata.system_path, "copied file");
+            tracing::trace!("repo path: {}", entry.repo_path.display());
+            std::fs::copy(&entry.repo_path, &entry.system_path)?;
+            tracing::trace!(from=?entry.repo_path, to=?entry.system_path, "copied file");
         }
 
         Ok(())
