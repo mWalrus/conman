@@ -61,7 +61,7 @@ impl FileManager {
     }
 
     #[instrument(skip(self))]
-    pub fn verify_cache_integrity(&self) -> Result<()> {
+    pub fn verify_cache_integrity(&mut self) -> Result<()> {
         let mut branch_cache = BranchCache::read()?;
 
         if branch_cache.is_empty() {
@@ -85,15 +85,28 @@ impl FileManager {
             "Detected differences in managed files since last run!".bold()
         );
 
-        for entry in dangling_files {
-            let confirmation = dialoguer::Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!("Delete dangling file {}", entry.display()))
+        let file_options = ["skip", "delete", "manage"];
+
+        for (path, encrypted) in dangling_files {
+            let choice = dialoguer::Select::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!("Delete dangling file {}", path.display()))
+                .items(&file_options)
+                .default(0)
                 .interact()?;
 
-            if confirmation {
-                std::fs::remove_file(&entry)?;
-                tracing::trace!("deleted file {}", entry.display());
-                println!("{}", "Deleted!".bold().green());
+            match file_options[choice] {
+                "delete" => {
+                    std::fs::remove_file(&path)?;
+                    tracing::trace!("deleted file {}", path.display());
+                    println!("{}", "Deleted!".bold().green());
+                }
+                "manage" => {
+                    self.manage(path, encrypted)?;
+                }
+                "skip" => {
+                    tracing::trace!("skipping file");
+                }
+                _ => unreachable!(),
             }
         }
 
@@ -243,9 +256,11 @@ impl FileManager {
         Ok(false)
     }
 
-    /// copy the file at `from` into `to`
+    /// manage a new file
     #[instrument(skip(self))]
-    pub fn copy(&mut self, from: PathBuf, to: PathBuf, encrypt: bool) -> Result<()> {
+    pub fn manage(&mut self, from: PathBuf, encrypt: bool) -> Result<()> {
+        let to = STATE.paths.repo_local_file_path(&from)?;
+
         if encrypt {
             let passphrase = STATE.config.encryption.passphrase.clone();
             let encryptor = Self::init_encryptor(passphrase);
@@ -253,14 +268,14 @@ impl FileManager {
         } else {
             self.copy_unencrypted(&from, &to)?;
         }
-        self.manage_new_file(from, to, encrypt)?;
+        self.add_file_to_metadata(from, to, encrypt)?;
         self.persist_metadata()?;
         Ok(())
     }
 
     /// add metadata about the newly added file to the conman store
     #[instrument(skip(self))]
-    fn manage_new_file(&mut self, from: PathBuf, to: PathBuf, encrypt: bool) -> Result<()> {
+    fn add_file_to_metadata(&mut self, from: PathBuf, to: PathBuf, encrypt: bool) -> Result<()> {
         let new_metadata = FileMetadata {
             system_path: from,
             repo_path: to,

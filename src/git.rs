@@ -10,9 +10,7 @@ use git2::{
 };
 use tracing::instrument;
 
-use crate::{
-    cache::branch::BranchCache, file::FileManager, paths::METADATA_FILE_NAME, state::STATE,
-};
+use crate::{file::FileManager, paths::METADATA_FILE_NAME, state::STATE};
 
 pub struct Repo {
     inner: Repository,
@@ -272,9 +270,7 @@ impl Repo {
             return Ok(());
         }
 
-        let destination_path = STATE.paths.repo_local_file_path(&source_path)?;
-
-        file_manager.copy(source_path, destination_path, encrypt)?;
+        file_manager.manage(source_path, encrypt)?;
         tracing::trace!("done adding file");
 
         Ok(())
