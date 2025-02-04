@@ -14,7 +14,6 @@ pub(crate) const BRANCH_CACHE_FILE_NAME: &str = "__branch_cache";
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct BranchCache {
     name: String,
-    repo: String,
     files: Vec<PathBuf>,
 }
 
@@ -30,6 +29,7 @@ impl BranchCache {
                 file.read_to_string(&mut contents)?;
                 tracing::trace!("read branch cache file");
                 let branch_cache: BranchCache = toml::from_str(&contents)?;
+                tracing::trace!("branch cache deserialized");
                 branch_cache
             }
             Err(_) => {
@@ -41,20 +41,52 @@ impl BranchCache {
         Ok(cache)
     }
 
-    #[instrument(skip(self, metadata), fields(cache, repo, equal))]
-    pub fn has_changes(&self, metadata: Vec<FileMetadata>) -> Result<bool> {
-        let has_changes = self.files.iter().all(|cache_file| {
-            tracing::Span::current().record("cache", cache_file.to_str());
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty() && self.files.is_empty()
+    }
+
+    pub fn dangling_entries<'m>(&'m self, metadata: &'m Vec<FileMetadata>) -> Vec<&'m PathBuf> {
+        self.files
+            .iter()
+            .filter(|file| {
+                metadata
+                    .iter()
+                    .find(|entry| entry.repo_path.eq(*file))
+                    .is_none()
+            })
+            .collect()
+    }
+
+    #[instrument(skip(self, metadata))]
+    pub fn update(&mut self, metadata: &Vec<FileMetadata>) {
+        self.name = STATE.config.upstream.branch.clone();
+        self.files = metadata
+            .clone()
+            .into_iter()
+            .map(|file| file.repo_path)
+            .collect();
+        tracing::trace!("updated branch cache");
+    }
+
+    pub fn has_changes(&self, metadata: &Vec<FileMetadata>) -> Result<bool> {
+        let has_changes = self.files.iter().any(|file| {
             metadata
                 .iter()
-                .find_map(|metadata_file| {
-                    tracing::Span::current().record("repo", metadata_file.repo_path.to_str());
-                    let equal = metadata_file.repo_path.eq(cache_file);
-                    tracing::Span::current().record("equal", equal);
-                    Some(equal)
-                })
-                .unwrap_or(false)
+                .find(|entry| entry.repo_path.eq(file))
+                .is_none()
         });
         Ok(has_changes)
+    }
+
+    #[instrument(skip(self))]
+    pub fn write(&self) -> Result<()> {
+        let cache = toml::to_string(&self)?;
+        tracing::trace!("serialized branch cache");
+
+        let path = STATE.paths.cache.join(BRANCH_CACHE_FILE_NAME);
+        std::fs::write(&path, cache)?;
+        tracing::trace!("wrote cache to {}", path.display());
+
+        Ok(())
     }
 }
