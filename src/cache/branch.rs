@@ -45,14 +45,23 @@ impl BranchCache {
         self.name.is_empty() && self.files.is_empty()
     }
 
-    pub fn dangling_entries<'m>(&'m self, metadata: &'m Vec<FileMetadata>) -> Vec<&'m PathBuf> {
+    pub fn dangling_entries<'m>(&'m self, metadata: &'m Vec<FileMetadata>) -> Vec<(PathBuf, bool)> {
         self.files
             .iter()
             .filter(|file| {
                 metadata
                     .iter()
-                    .find(|entry| entry.repo_path.eq(*file))
+                    .find(|entry| entry.system_path.eq(*file))
                     .is_none()
+            })
+            .map(|file| {
+                (
+                    file.clone(),
+                    metadata
+                        .iter()
+                        .find_map(|entry| entry.system_path.eq(file).then_some(entry.encrypted))
+                        .unwrap_or(false),
+                )
             })
             .collect()
     }
@@ -63,7 +72,7 @@ impl BranchCache {
         self.files = metadata
             .clone()
             .into_iter()
-            .map(|file| file.repo_path)
+            .map(|file| file.system_path)
             .collect();
         tracing::trace!("updated branch cache");
     }
@@ -72,7 +81,7 @@ impl BranchCache {
         let has_changes = self.files.iter().any(|file| {
             metadata
                 .iter()
-                .find(|entry| entry.repo_path.eq(file))
+                .find(|entry| entry.system_path.eq(file))
                 .is_none()
         });
         Ok(has_changes)
