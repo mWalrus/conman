@@ -6,11 +6,12 @@ use std::{
 
 use age::{secrecy::SecretString, Encryptor};
 use anyhow::Result;
+use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::instrument;
 
-use crate::state::STATE;
+use crate::{cache::branch::BranchCache, state::STATE};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct FileMetadata {
@@ -57,6 +58,49 @@ impl FileManager {
         };
 
         Ok(Self { metadata })
+    }
+
+    #[instrument(skip(self))]
+    pub fn verify_cache_integrity(&self) -> Result<()> {
+        let mut branch_cache = BranchCache::read()?;
+
+        if branch_cache.is_empty() {
+            tracing::trace!("branch cache is empty");
+            branch_cache.update(&self.metadata.metadata);
+            branch_cache.write()?;
+            return Ok(());
+        }
+
+        if !branch_cache.has_changes(&self.metadata.metadata)? {
+            tracing::trace!("no changes found");
+            return Ok(());
+        }
+
+        let dangling_files = branch_cache.dangling_entries(&self.metadata.metadata);
+
+        tracing::trace!("found {} dangling files", dangling_files.len());
+
+        println!(
+            "{}",
+            "Detected differences in managed files since last run!".bold()
+        );
+
+        for entry in dangling_files {
+            let confirmation = dialoguer::Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!("Delete dangling file {}", entry.display()))
+                .interact()?;
+
+            if confirmation {
+                std::fs::remove_file(&entry)?;
+                tracing::trace!("deleted file {}", entry.display());
+                println!("{}", "Deleted!".bold().green());
+            }
+        }
+
+        branch_cache.update(&self.metadata.metadata);
+        branch_cache.write()?;
+
+        Ok(())
     }
 
     /// set up the encryptor used for `age` file encryption

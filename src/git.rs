@@ -10,7 +10,9 @@ use git2::{
 };
 use tracing::instrument;
 
-use crate::{file::FileManager, paths::METADATA_FILE_NAME, state::STATE};
+use crate::{
+    cache::branch::BranchCache, file::FileManager, paths::METADATA_FILE_NAME, state::STATE,
+};
 
 pub struct Repo {
     inner: Repository,
@@ -65,23 +67,13 @@ impl Repo {
 
         let mut repo = Self::new_internal(repo);
 
-        // FIXME: if a user defines a config branch and applies it to their system
-        //        and then switches to another config branch and applies that, what
-        //        happens to files that were managed by the first config branch but
-        //        not the second?
-        //        Do we want to remove applied files from the user's system or do
-        //        we simply warn when we detect a branch switch that has differences
-        //        in managed files?
-        // SOLUTION: When a user checks out an existing branch we will gather the differences between the
-        //           current branch and the branch we are about to move over to. Then we ask the user
-        //           whether they want to delete the file(s) not managed by the just-switched-over-to branch.
-        // FIXME: we will have to store the state of each branch once we load a branch to disk in order to
-        //        be able to detect differences between branch switches.
         let branch = &STATE.config.upstream.branch;
         if !repo.head_matches(branch)? {
             repo.checkout(branch)?;
             repo.set_upstream(branch)?;
         }
+
+        FileManager::new()?.verify_cache_integrity()?;
 
         Ok(repo)
     }
