@@ -5,6 +5,7 @@ use git::Repo;
 mod args;
 mod cache;
 mod config;
+mod conman;
 mod file;
 mod git;
 mod paths;
@@ -17,40 +18,22 @@ fn main() {
 
     tracing::trace!(command = ?args.command, "running command");
 
-    match args.command {
-        Command::Init => {
-            Repo::clone().unwrap();
-        }
-        Command::Diff { no_color } => {
-            let repo = Repo::open().unwrap();
-        }
-        Command::Status => {
-            Repo::open().unwrap().status().unwrap();
-        }
-        Command::Edit { path, skip_update } => {
-            Repo::open().unwrap().edit(path, skip_update).unwrap()
-        }
-        Command::Save => Repo::open().unwrap().save().unwrap(),
-        Command::Push => {
-            Repo::open().unwrap().push(None).unwrap();
-        }
-        Command::Pull => {
-            Repo::open().unwrap().pull().unwrap();
-        }
-        Command::Add { path, encrypt } => {
-            Repo::open().unwrap().add(path, encrypt).unwrap();
-        }
-        Command::Remove { path } => {
-            Repo::open().unwrap().remove(path).unwrap();
-        }
-        Command::List => {
-            Repo::open().unwrap().list().unwrap();
-        }
-        Command::Apply { no_confirm } => {
-            Repo::open().unwrap().apply(no_confirm).unwrap();
-        }
-        Command::Collect { path, no_confirm } => {
-            Repo::open().unwrap().collect(path, no_confirm).unwrap();
-        }
+    let result = match args.command {
+        Command::Init => conman::init(),
+        Command::Diff { no_color } => conman::diff(),
+        Command::Status => conman::status(),
+        Command::Edit { path, skip_update } => conman::edit(path, skip_update),
+        Command::Save => conman::save(),
+        Command::Push => conman::push(None),
+        Command::Pull => conman::pull(),
+        Command::Add { path, encrypt } => conman::add(path, encrypt),
+        Command::Remove { path } => conman::remove(path),
+        Command::List => conman::list(),
+        Command::Apply { no_confirm } => conman::apply(no_confirm),
+        Command::Collect { path, no_confirm } => conman::collect(path, no_confirm),
+    };
+
+    if let Err(e) = result {
+        eprintln!("{e:?}");
     }
 }

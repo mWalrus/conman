@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use colored::{ColoredString, Colorize};
-use dialoguer::{theme::ColorfulTheme, Confirm};
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
-    PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status, StatusOptions, Statuses,
+    PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status, StatusEntry,
+    StatusOptions, Statuses,
 };
 use tracing::instrument;
 
@@ -17,14 +17,14 @@ pub struct Repo {
 }
 
 #[derive(Debug)]
-struct StatusEntry {
-    status: StatusUpdate,
-    old: Option<PathBuf>,
-    new: Option<PathBuf>,
+pub struct StatusUpdate {
+    pub status: StatusType,
+    pub old: Option<PathBuf>,
+    pub new: Option<PathBuf>,
 }
 
 #[derive(Debug)]
-enum StatusUpdate {
+pub enum StatusType {
     New,
     Modified,
     Deleted,
@@ -32,24 +32,24 @@ enum StatusUpdate {
     TypeChange,
 }
 
-impl StatusUpdate {
-    fn into_colored_string(&self) -> ColoredString {
+impl StatusType {
+    pub fn into_colored_string(&self) -> ColoredString {
         match self {
-            StatusUpdate::New => "new".green(),
-            StatusUpdate::Modified => "modified".yellow(),
-            StatusUpdate::Deleted => "deleted".red(),
-            StatusUpdate::Renamed => "renamed".magenta(),
-            StatusUpdate::TypeChange => "typechange".blue(),
+            StatusType::New => "new".green(),
+            StatusType::Modified => "modified".yellow(),
+            StatusType::Deleted => "deleted".red(),
+            StatusType::Renamed => "renamed".magenta(),
+            StatusType::TypeChange => "typechange".blue(),
         }
     }
 
-    fn to_str(&self) -> &'_ str {
+    pub fn to_str(&self) -> &'_ str {
         match self {
-            StatusUpdate::New => "new",
-            StatusUpdate::Modified => "modified",
-            StatusUpdate::Deleted => "deleted",
-            StatusUpdate::Renamed => "renamed",
-            StatusUpdate::TypeChange => "typechange",
+            StatusType::New => "new",
+            StatusType::Modified => "modified",
+            StatusType::Deleted => "deleted",
+            StatusType::Renamed => "renamed",
+            StatusType::TypeChange => "typechange",
         }
     }
 }
@@ -191,7 +191,7 @@ impl Repo {
             repo.make_initial_commit()?;
             repo.checkout(&branch)?;
             repo.set_upstream(&branch)?;
-            repo.push(Some(&branch))?;
+            repo.push(&branch)?;
         }
 
         repo.checkout(&STATE.config.upstream.branch)?;
@@ -254,83 +254,26 @@ impl Repo {
         Ok(())
     }
 
-    /// Add a file from your local system to be managed by conman
-    #[instrument(skip(self))]
-    pub fn add(&self, source: PathBuf, encrypt: bool) -> Result<()> {
-        let source_path = std::fs::canonicalize(source)?;
-
-        tracing::trace!(source=?source_path, "canonicalized source path");
-
-        let mut file_manager = FileManager::new()?;
-
-        // we return if the file is already managed since we
-        // don't want to do anything in this case
-        if file_manager.is_already_managed(&source_path) {
-            tracing::trace!("file is already managed, skipping");
-            return Ok(());
-        }
-
-        file_manager.manage(source_path, encrypt)?;
-        tracing::trace!("done adding file");
-
-        Ok(())
-    }
-
-    #[instrument(skip(self))]
-    pub fn list(&self) -> Result<()> {
-        tracing::trace!("listing managed files");
-
-        let file_manager = FileManager::new()?;
-        let metadata = file_manager.metadata();
-
-        println!("{}", "Managed files:".bold());
-        for (i, file) in metadata.iter().enumerate() {
-            let encrypted_text = if file.encrypted {
-                "true".green()
-            } else {
-                "false".red()
-            };
-
-            println!(
-                "{} {}",
-                "File".blue().bold(),
-                (i + 1).to_string().blue().bold()
-            );
-            println!(
-                "  {}: {}",
-                "Path".bold(),
-                file.system_path.display().to_string().underline()
-            );
-            println!("  {}: {}", "Encrypted".bold(), encrypted_text);
-        }
-        Ok(())
-    }
-
-    #[instrument(skip(self))]
-    pub fn remove(&self, path: PathBuf) -> Result<()> {
-        tracing::trace!(to_remove=?path, "removing managed file");
-        let mut file_manager = FileManager::new()?;
-        file_manager.remove(&path)?;
-        Ok(())
-    }
-
     #[instrument(skip(self))]
     fn prepare_commit_message(&self) -> Result<Option<String>> {
-        let statuses = self.status_entries()?;
-
-        if !self.has_changes(&statuses)? {
-            return Ok(None);
-        }
-
-        let status_entries = self.prepare_status_updates(statuses)?;
+        let status_changes = match self.status_changes() {
+            Ok(Some(status_changes)) => status_changes,
+            Ok(None) => {
+                tracing::trace!("no status change found");
+                return Ok(None);
+            }
+            Err(e) => {
+                return Err(e)?;
+            }
+        };
 
         // we need this to find the system path of each file
         let file_manager = FileManager::new()?;
 
         let mut commit_message = "system-update: updating files\n\n".to_string();
-        let change_count = status_entries.len();
+        let change_count = status_changes.len();
 
-        for (i, entry) in status_entries.into_iter().enumerate() {
+        for (i, entry) in status_changes.into_iter().enumerate() {
             let file_path = entry.old.or(entry.new).unwrap();
             let Some(file_path) = file_manager.find_path(&file_path) else {
                 continue;
@@ -557,10 +500,6 @@ impl Repo {
 
     #[instrument(skip(self))]
     pub fn pull(&self) -> Result<()> {
-        if self.check_has_unsaved()? {
-            return Ok(());
-        }
-
         let remote_name = "origin";
         let remote_branch = &STATE.config.upstream.branch;
 
@@ -574,47 +513,7 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    pub fn status(&self) -> Result<()> {
-        let entries = self.status_entries()?;
-
-        if !self.has_changes(&entries)? {
-            println!("{}", "No changes detected, there is nothing to do".green());
-            return Ok(());
-        }
-
-        let updates = self.prepare_status_updates(entries)?;
-
-        self.print_status_updates(updates);
-
-        Ok(())
-    }
-
-    fn print_status_updates(&self, updates: Vec<StatusEntry>) {
-        println!("{}", "Unsaved changes:".bold());
-
-        for update in updates.iter() {
-            match (update.old.as_ref(), update.new.as_ref()) {
-                (Some(old), Some(new)) if old != new => {
-                    println!(
-                        "{}: {} -> {}",
-                        update.status.into_colored_string(),
-                        old.display(),
-                        new.display()
-                    );
-                }
-                (old, new) => {
-                    println!(
-                        "{}: {}",
-                        update.status.into_colored_string(),
-                        old.or(new).unwrap().display()
-                    )
-                }
-            }
-        }
-    }
-
-    #[instrument(skip(self))]
-    fn status_entries(&self) -> Result<Statuses<'_>> {
+    pub fn status_entries(&self) -> Result<Statuses<'_>> {
         let mut status_options = StatusOptions::new();
         status_options.include_untracked(true);
 
@@ -624,34 +523,47 @@ impl Repo {
         Ok(status_entries)
     }
 
-    #[instrument(skip(self, entries), fields(has_changes))]
-    fn has_changes(&self, entries: &Statuses<'_>) -> Result<bool> {
-        let has_changes = entries.iter().any(|entry| {
-            entry.status().intersects(
-                Status::WT_NEW
-                    | Status::WT_MODIFIED
-                    | Status::WT_DELETED
-                    | Status::WT_RENAMED
-                    | Status::WT_TYPECHANGE,
-            )
-        });
+    #[instrument(skip(self))]
+    pub fn status_changes(&self) -> Result<Option<Vec<StatusUpdate>>> {
+        let status_entries = self.status_entries()?;
 
-        tracing::Span::current().record("has_changes", has_changes);
+        let status_changes: Vec<_> = status_entries
+            .iter()
+            .filter(|entry| {
+                entry.status().intersects(
+                    Status::WT_NEW
+                        | Status::WT_MODIFIED
+                        | Status::WT_DELETED
+                        | Status::WT_RENAMED
+                        | Status::WT_TYPECHANGE,
+                )
+            })
+            .collect();
 
-        Ok(has_changes)
+        if status_changes.is_empty() {
+            tracing::trace!("no status changes found");
+            return Ok(None);
+        }
+
+        let formatted_updates = self.prepare_status_updates(status_changes)?;
+
+        Ok(Some(formatted_updates))
     }
 
     #[instrument(skip(self, entries))]
-    fn prepare_status_updates(&self, entries: Statuses<'_>) -> Result<Vec<StatusEntry>> {
+    pub fn prepare_status_updates(
+        &self,
+        entries: Vec<StatusEntry<'_>>,
+    ) -> Result<Vec<StatusUpdate>> {
         let mut status_updates = Vec::with_capacity(entries.len());
 
         for status_entry in entries.iter() {
             let workdir_tree_status = match status_entry.status() {
-                s if s.contains(Status::WT_NEW) => StatusUpdate::New,
-                s if s.contains(Status::WT_MODIFIED) => StatusUpdate::Modified,
-                s if s.contains(Status::WT_DELETED) => StatusUpdate::Deleted,
-                s if s.contains(Status::WT_RENAMED) => StatusUpdate::Renamed,
-                s if s.contains(Status::WT_TYPECHANGE) => StatusUpdate::TypeChange,
+                s if s.contains(Status::WT_NEW) => StatusType::New,
+                s if s.contains(Status::WT_MODIFIED) => StatusType::Modified,
+                s if s.contains(Status::WT_DELETED) => StatusType::Deleted,
+                s if s.contains(Status::WT_RENAMED) => StatusType::Renamed,
+                s if s.contains(Status::WT_TYPECHANGE) => StatusType::TypeChange,
                 _ => continue,
             };
 
@@ -675,7 +587,7 @@ impl Repo {
             let old_path = diff.old_file().path().map(|path| path.to_path_buf());
             let new_path = diff.new_file().path().map(|path| path.to_path_buf());
 
-            status_updates.push(StatusEntry {
+            status_updates.push(StatusUpdate {
                 status: workdir_tree_status,
                 old: old_path,
                 new: new_path,
@@ -685,64 +597,12 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    fn check_has_unsaved(&self) -> Result<bool> {
-        let status_entries = self.status_entries()?;
-        if self.has_changes(&status_entries)? {
-            println!(
-                "{}",
-                "You have unsaved changes, please save them first".yellow()
-            );
-            let updates = self.prepare_status_updates(status_entries)?;
-            self.print_status_updates(updates);
-            return Ok(true);
-        }
-        Ok(false)
+    pub fn check_has_unsaved(&self) -> Result<bool> {
+        self.status_changes().map(|changes| changes.is_some())
     }
 
     #[instrument(skip(self))]
-    pub fn apply(&self, no_confirm: bool) -> Result<()> {
-        if self.check_has_unsaved()? {
-            return Ok(());
-        }
-
-        let file_manager = FileManager::new()?;
-
-        for entry in file_manager.metadata() {
-            tracing::trace!(entry=?entry ,"handling file");
-            if !no_confirm {
-                let prompt = format!("Do you want to apply '{}'", entry.system_path.display());
-                if let Ok(false) = Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt(prompt)
-                    .interact()
-                {
-                    continue;
-                }
-            }
-
-            if let Some(parent) = entry.system_path.parent() {
-                if !parent.exists() {
-                    tracing::trace!("parent(s) does not exist");
-                    std::fs::create_dir_all(parent)?;
-                    tracing::trace!("created parent dirs");
-                }
-            }
-
-            tracing::trace!("repo path: {}", entry.repo_path.display());
-            std::fs::copy(&entry.repo_path, &entry.system_path)?;
-            tracing::trace!(from=?entry.repo_path, to=?entry.system_path, "copied file");
-        }
-
-        Ok(())
-    }
-
-    #[instrument(skip(self))]
-    pub fn push(&self, override_branch: Option<&str>) -> Result<()> {
-        let branch_name = override_branch.unwrap_or(&STATE.config.upstream.branch);
-
-        if self.check_has_unsaved()? {
-            return Ok(());
-        }
-
+    pub fn push(&self, branch_name: &str) -> Result<()> {
         let mut remote_callbacks = RemoteCallbacks::new();
         remote_callbacks.push_update_reference(|refname, status| {
             let _span = tracing::trace_span!("push_update_reference").entered();
@@ -768,18 +628,6 @@ impl Repo {
         remote.push(&[refspec], Some(&mut push_options))?;
         tracing::trace!("pushed local changes to origin/{branch_name}",);
 
-        Ok(())
-    }
-
-    #[instrument(skip(self, path, skip_update))]
-    pub fn edit(&self, path: Option<PathBuf>, skip_update: bool) -> Result<()> {
-        FileManager::new()?.edit_managed_file(path, skip_update)?;
-        Ok(())
-    }
-
-    #[instrument(skip(self, path, no_confirm))]
-    pub fn collect(&self, path: Option<PathBuf>, no_confirm: bool) -> Result<()> {
-        FileManager::new()?.collect(path, no_confirm)?;
         Ok(())
     }
 }
