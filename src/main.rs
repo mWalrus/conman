@@ -19,7 +19,7 @@ fn main() {
 
     let result = match args.command {
         Command::Init => conman::init(),
-        Command::Diff { no_color } => conman::diff(),
+        Command::Diff { no_color } => conman::diff(no_color),
         Command::Status => conman::status(),
         Command::Edit { path, skip_update } => conman::edit(path, skip_update),
         Command::Save => conman::save(),

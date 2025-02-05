@@ -18,7 +18,7 @@ pub fn init() -> Result<()> {
 }
 
 #[instrument]
-pub fn diff() -> Result<()> {
+pub fn diff(_no_color: bool) -> Result<()> {
     let _repo = Repo::open()?;
     Ok(())
 }
