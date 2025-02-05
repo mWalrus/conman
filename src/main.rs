@@ -1,6 +1,5 @@
 use args::{Args, Command};
 use clap::Parser;
-use git::Repo;
 
 mod args;
 mod cache;
