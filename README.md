@@ -11,7 +11,6 @@ Easily manage local configuration across installations and devices by leveraging
 ## Installation
 1. Create a repo with your favorite git provider (GitHub, GitLab, ...)
 2. Clone the project: `git clone git@github.com:mwalrus/conman`
-<!-- add makefile -->
 3. Install ConMan: `make install`
 <!-- add example config.toml -->
 4. Populate `config.toml` with the required information
