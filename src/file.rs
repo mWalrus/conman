@@ -6,12 +6,11 @@ use std::{
 
 use age::{secrecy::SecretString, Encryptor};
 use anyhow::Result;
-use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::instrument;
 
-use crate::{cache::branch::BranchCache, state::STATE};
+use crate::state::STATE;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct FileMetadata {
@@ -60,62 +59,9 @@ impl FileManager {
         Ok(Self { metadata })
     }
 
-    #[instrument(skip(self))]
-    pub fn verify_cache_integrity(&mut self) -> Result<()> {
-        let mut branch_cache = BranchCache::read()?;
-
-        if branch_cache.is_empty() {
-            tracing::trace!("branch cache is empty");
-            branch_cache.update(&self.metadata.metadata);
-            branch_cache.write()?;
-            return Ok(());
-        }
-
-        if !branch_cache.has_changes(&self.metadata.metadata)? {
-            tracing::trace!("no changes found");
-            return Ok(());
-        }
-
-        let dangling_files = branch_cache.dangling_entries(&self.metadata.metadata);
-
-        tracing::trace!("found {} dangling files", dangling_files.len());
-
-        println!(
-            "{}",
-            "Detected differences in managed files since last run!".bold()
-        );
-
-        let file_options = ["skip", "delete", "manage"];
-
-        for (path, encrypted) in dangling_files {
-            let choice = dialoguer::Select::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!("Delete dangling file {}", path.display()))
-                .items(&file_options)
-                .default(0)
-                .interact()?;
-
-            match file_options[choice] {
-                "delete" => {
-                    std::fs::remove_file(&path)?;
-                    tracing::trace!("deleted file {}", path.display());
-                    println!("{}", "Deleted!".bold().green());
-                }
-                "manage" => {
-                    self.manage(path, encrypted)?;
-                }
-                "skip" => {
-                    tracing::trace!("skipping file");
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        branch_cache.update(&self.metadata.metadata);
-        branch_cache.write()?;
-
-        Ok(())
+    pub fn metadata_is_empty(&self) -> bool {
+        self.metadata.metadata.is_empty()
     }
-
     /// set up the encryptor used for `age` file encryption
     fn init_encryptor(secret: String) -> Encryptor {
         let passphrase = SecretString::from(secret);

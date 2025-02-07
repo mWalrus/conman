@@ -17,6 +17,8 @@ fn main() {
 
     tracing::trace!(command = ?args.command, "running command");
 
+    conman::verify_local_file_cache().unwrap();
+
     let result = match args.command {
         Command::Init => conman::init(),
         Command::Diff { no_color } => conman::diff(no_color),

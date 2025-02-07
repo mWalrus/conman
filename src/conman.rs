@@ -6,6 +6,7 @@ use dialoguer::{theme::ColorfulTheme, Confirm};
 use tracing::instrument;
 
 use crate::{
+    cache::branch::BranchCache,
     file::FileManager,
     git::{Repo, StatusUpdate},
     state::STATE,
@@ -258,6 +259,67 @@ pub fn push(override_branch: Option<&str>) -> Result<()> {
     let branch_name = override_branch.unwrap_or(&STATE.config.upstream.branch);
 
     repo.push(branch_name)?;
+
+    Ok(())
+}
+
+#[instrument]
+pub fn verify_local_file_cache() -> Result<()> {
+    let mut file_manager = FileManager::new()?;
+    let mut branch_cache = BranchCache::read()?;
+
+    if branch_cache.is_empty() && file_manager.metadata_is_empty() {
+        tracing::trace!("metadata and cache is empty, there is nothing to do");
+        return Ok(());
+    }
+
+    if branch_cache.is_empty() && !file_manager.metadata_is_empty() {
+        tracing::trace!("branch cache is empty but metadata has data. updating branch cache");
+        branch_cache.update(file_manager.metadata());
+        branch_cache.write()?;
+        return Ok(());
+    }
+
+    if !branch_cache.has_changes(file_manager.metadata())? {
+        tracing::trace!("no changes found");
+        return Ok(());
+    }
+
+    let dangling_files = branch_cache.dangling_entries(file_manager.metadata());
+    tracing::trace!("found {} dangling files", dangling_files.len());
+
+    println!(
+        "{}",
+        "Detected differences in managed files since last run!".bold()
+    );
+
+    let file_options = ["skip", "delete", "manage"];
+
+    for (path, encrypted) in dangling_files {
+        let choice = dialoguer::Select::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Delete dangling file {}", path.display()))
+            .items(&file_options)
+            .default(0)
+            .interact()?;
+
+        match file_options[choice] {
+            "delete" => {
+                std::fs::remove_file(&path)?;
+                tracing::trace!("deleted file {}", path.display());
+                println!("{}", "Deleted!".bold().green());
+            }
+            "manage" => {
+                file_manager.manage(path, encrypted)?;
+            }
+            "skip" => {
+                tracing::trace!("skipping file");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    branch_cache.update(file_manager.metadata());
+    branch_cache.write()?;
 
     Ok(())
 }
