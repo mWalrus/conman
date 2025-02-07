@@ -20,10 +20,25 @@ pub struct EncryptionConfig {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UpstreamConfig {
     pub url: String,
-    #[serde(deserialize_with = "path_resolver")]
+    #[serde(default, deserialize_with = "path_resolver")]
     pub key_file: Option<PathBuf>,
     #[serde(default = "default_branch")]
     pub branch: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            encryption: EncryptionConfig {
+                passphrase: String::new(),
+            },
+            upstream: UpstreamConfig {
+                url: String::new(),
+                key_file: None,
+                branch: String::new(),
+            },
+        }
+    }
 }
 
 #[inline(always)]
@@ -43,7 +58,21 @@ impl Config {
         }
 
         let config_file = config.join("config.toml");
-        let mut config_file = File::open(config_file)?;
+        let mut config_file = match File::open(&config_file) {
+            Ok(file) => file,
+            Err(_) => {
+                println!("Config file not found, creating default...");
+                let default_config = Self::default();
+                let toml = toml::to_string(&default_config)?;
+                tracing::trace!("serialized default config");
+                std::fs::write(&config_file, toml)?;
+                println!(
+                    "Wrote empty config to '{}'. Please populate it!",
+                    config_file.display()
+                );
+                std::process::exit(0);
+            }
+        };
 
         let mut contents = String::new();
         config_file.read_to_string(&mut contents)?;
