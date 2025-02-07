@@ -77,8 +77,51 @@ fn print_unsaved_changes_warning() {
 
 #[instrument]
 pub fn save() -> Result<()> {
-    Repo::open()?.save()?;
+    let repo = Repo::open()?;
+
+    let status_changes = match repo.status_changes() {
+        Ok(Some(status_changes)) => status_changes,
+        Ok(None) => {
+            tracing::trace!("no status change found, skipping save");
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(e)?;
+        }
+    };
+
+    let file_manager = FileManager::new()?;
+    let commit_message = construct_commit_message(&file_manager, status_changes);
+    repo.commit_changes(commit_message)?;
+
     Ok(())
+}
+
+#[instrument(skip(file_manager, status_changes))]
+fn construct_commit_message(
+    file_manager: &FileManager,
+    status_changes: Vec<StatusUpdate>,
+) -> String {
+    // we need this to find the system path of each file
+    let mut commit_message = "system-update: updating files\n\n".to_string();
+    let change_count = status_changes.len();
+
+    for (i, entry) in status_changes.into_iter().enumerate() {
+        let file_path = entry.old.or(entry.new).unwrap();
+        let Some(file_path) = file_manager.find_path(&file_path) else {
+            continue;
+        };
+
+        let update = format!(
+            "{}: {}{}",
+            entry.status.to_str(),
+            file_path.display(),
+            if i + 1 == change_count { "" } else { "\n" }
+        );
+
+        commit_message.push_str(&update);
+    }
+    commit_message
 }
 
 #[instrument]

@@ -255,51 +255,8 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    fn prepare_commit_message(&self) -> Result<Option<String>> {
-        let status_changes = match self.status_changes() {
-            Ok(Some(status_changes)) => status_changes,
-            Ok(None) => {
-                tracing::trace!("no status change found");
-                return Ok(None);
-            }
-            Err(e) => {
-                return Err(e)?;
-            }
-        };
-
-        // we need this to find the system path of each file
-        let file_manager = FileManager::new()?;
-
-        let mut commit_message = "system-update: updating files\n\n".to_string();
-        let change_count = status_changes.len();
-
-        for (i, entry) in status_changes.into_iter().enumerate() {
-            let file_path = entry.old.or(entry.new).unwrap();
-            let Some(file_path) = file_manager.find_path(&file_path) else {
-                continue;
-            };
-
-            let update = format!(
-                "{}: {}{}",
-                entry.status.to_str(),
-                file_path.display(),
-                if i + 1 == change_count { "" } else { "\n" }
-            );
-
-            commit_message.push_str(&update);
-        }
-        Ok(Some(commit_message))
-    }
-
-    #[instrument(skip(self))]
-    pub fn save(&mut self) -> Result<()> {
+    pub fn commit_changes(&self, commit_message: String) -> Result<()> {
         let mut index = self.inner.index()?;
-
-        let maybe_commit_message = self.prepare_commit_message()?;
-        let Some(commit_message) = maybe_commit_message else {
-            tracing::trace!("nothing changes found, aborting");
-            return Ok(());
-        };
 
         index.add_all(&["."], git2::IndexAddOption::DEFAULT, None)?;
         tracing::trace!("staged all files");
