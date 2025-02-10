@@ -99,7 +99,6 @@ impl FileManager {
 
         tracing::trace!("got selected file path: {file_path:?}");
 
-        // FIXME: relative paths crash
         let file_metadata = self
             .metadata
             .metadata
