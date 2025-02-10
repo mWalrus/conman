@@ -68,6 +68,7 @@ pub enum Command {
         )]
         no_confirm: bool,
     },
+    #[command(about = "collect any updates made to managed files on disk")]
     Collect {
         #[arg(help = "relative or absolute path to specific file")]
         path: Option<PathBuf>,
@@ -78,6 +79,7 @@ pub enum Command {
         )]
         no_confirm: bool,
     },
+    #[command(about = "manage branches in conman")]
     Branch {
         #[arg(help = "name of branch to checkout")]
         name: String,
