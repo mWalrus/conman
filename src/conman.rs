@@ -333,7 +333,19 @@ pub fn verify_local_file_cache(paths: &Paths, config: &Config) -> Result<()> {
 }
 
 #[instrument(skip(config, repo))]
-pub fn change_branch(config: &mut Config, repo: &Repo, branch_name: &str) -> Result<()> {
+pub fn branch(config: &mut Config, repo: &Repo, branch_name: &str, delete: bool) -> Result<()> {
+    if delete {
+        let confirmation = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Are you sure you want to delete {branch_name}"))
+            .interact()?;
+
+        if confirmation {
+            repo.delete_branch(branch_name)?;
+        }
+
+        return Ok(());
+    }
+
     config.upstream.branch = branch_name.to_string();
 
     repo.checkout(&config.upstream.branch)?;

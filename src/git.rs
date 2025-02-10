@@ -83,6 +83,18 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
+    pub fn delete_branch(&self, branch_name: &str) -> Result<()> {
+        let mut branch = self
+            .inner
+            .find_branch(branch_name, git2::BranchType::Local)?;
+
+        branch.delete()?;
+        tracing::trace!("deleted branch");
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
     pub fn set_upstream(&self, branch_name: &str) -> Result<()> {
         let mut branch = self
             .inner

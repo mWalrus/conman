@@ -81,5 +81,7 @@ pub enum Command {
     Branch {
         #[arg(help = "name of branch to checkout")]
         name: String,
+        #[arg(required = false, long, help = "delete specified branch")]
+        delete: bool,
     },
 }
