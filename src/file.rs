@@ -10,8 +10,6 @@ use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::instrument;
 
-use crate::state::STATE;
-
 #[derive(Debug)]
 pub enum CacheVerdict {
     FullPopulate,
@@ -45,8 +43,8 @@ struct Metadata {
 
 impl FileManager {
     #[instrument]
-    pub fn new() -> Result<Self> {
-        let metadata = Self::read_metadata(&STATE.paths.metadata)?;
+    pub fn new(metadata_path: &PathBuf) -> Result<Self> {
+        let metadata = Self::read_metadata(&metadata_path)?;
         Ok(Self { metadata })
     }
 
@@ -69,8 +67,8 @@ impl FileManager {
     }
 
     #[instrument(skip(self))]
-    pub fn verify_cache(&self) -> Result<CacheVerdict> {
-        let cache = Self::read_metadata(&STATE.paths.metadata_cache)?;
+    pub fn verify_cache(&self, cache_path: &PathBuf) -> Result<CacheVerdict> {
+        let cache = Self::read_metadata(cache_path)?;
 
         if cache.files.is_empty() && !self.metadata.files.is_empty() {
             return Ok(CacheVerdict::FullPopulate);
@@ -106,13 +104,12 @@ impl FileManager {
             .collect()
     }
 
-    pub fn write_cache(&self) -> Result<()> {
+    pub fn write_cache(&self, cache_path: &PathBuf) -> Result<()> {
         let cache = toml::to_string(&self.metadata)?;
         tracing::trace!("serialized branch cache");
 
-        let path = &STATE.paths.metadata_cache;
-        std::fs::write(path, cache)?;
-        tracing::trace!("wrote cache to {}", path.display());
+        std::fs::write(cache_path, cache)?;
+        tracing::trace!("wrote cache to {}", cache_path.display());
 
         Ok(())
     }
@@ -124,7 +121,12 @@ impl FileManager {
     }
 
     #[instrument(skip(self), fields(source_was_updated))]
-    pub fn edit_managed_file(&self, path: Option<PathBuf>, skip_update: bool) -> Result<()> {
+    pub fn edit_managed_file(
+        &self,
+        path: Option<PathBuf>,
+        skip_update: bool,
+        passphrase: &str,
+    ) -> Result<()> {
         let file_path = match path {
             Some(path) => path,
             None => {
@@ -179,14 +181,13 @@ impl FileManager {
         }
 
         tracing::trace!("preparing to copy file contents");
-        self.copy_managed_file(file_metadata)?;
+        self.copy_managed_file(file_metadata, passphrase)?;
         Ok(())
     }
 
-    fn copy_managed_file(&self, metadata: &FileData) -> Result<()> {
+    fn copy_managed_file(&self, metadata: &FileData, passphrase: &str) -> Result<()> {
         if metadata.encrypted {
-            let passphrase = STATE.config.encryption.passphrase.clone();
-            let encryptor = Self::init_encryptor(passphrase);
+            let encryptor = Self::init_encryptor(passphrase.to_string());
             self.copy_encrypted(encryptor, &metadata.system_path, &metadata.repo_path)?;
         } else {
             self.copy_unencrypted(&metadata.system_path, &metadata.repo_path)?;
@@ -195,7 +196,7 @@ impl FileManager {
     }
 
     #[instrument(skip(self))]
-    pub fn collect(&self, path: Option<PathBuf>, no_confirm: bool) -> Result<()> {
+    pub fn collect(&self, path: Option<PathBuf>, no_confirm: bool, passphrase: &str) -> Result<()> {
         let mut file_metadata_collection = self.metadata.files.clone();
         if let Some(p) = path {
             file_metadata_collection.retain(|fm| fm.system_path.eq(&p));
@@ -210,7 +211,7 @@ impl FileManager {
 
             if no_confirm {
                 tracing::trace!("no confirmation needed, copying");
-                self.copy_managed_file(file)?;
+                self.copy_managed_file(file, passphrase)?;
                 continue;
             }
 
@@ -221,7 +222,7 @@ impl FileManager {
 
             tracing::trace!("user gave confirmation: {confirmation}");
             if confirmation {
-                self.copy_managed_file(file)?;
+                self.copy_managed_file(file, passphrase)?;
             }
         }
 
@@ -258,13 +259,18 @@ impl FileManager {
     }
 
     /// manage a new file
-    #[instrument(skip(self))]
-    pub fn manage(&mut self, from: PathBuf, encrypt: bool) -> Result<()> {
-        let to = STATE.paths.repo_local_file_path(&from)?;
+    #[instrument(skip(self, dest_constructor))]
+    pub fn manage(
+        &mut self,
+        from: PathBuf,
+        encrypt: bool,
+        dest_constructor: impl Fn(&PathBuf) -> Result<PathBuf>,
+        passphrase: &str,
+    ) -> Result<()> {
+        let to = dest_constructor(&from)?;
 
         if encrypt {
-            let passphrase = STATE.config.encryption.passphrase.clone();
-            let encryptor = Self::init_encryptor(passphrase);
+            let encryptor = Self::init_encryptor(passphrase.to_string());
             self.copy_encrypted(encryptor, &from, &to)?;
         } else {
             self.copy_unencrypted(&from, &to)?;
@@ -332,11 +338,11 @@ impl FileManager {
 
     /// persist file metadata to disk
     #[instrument(skip(self))]
-    pub fn persist_metadata(&self) -> Result<()> {
+    pub fn persist_metadata(&self, metadata_path: &PathBuf) -> Result<()> {
         let metadata = toml::to_string(&self.metadata)?;
 
-        std::fs::write(&STATE.paths.metadata, metadata)?;
-        tracing::trace!(path=?STATE.paths.metadata, "wrote metadata to disk");
+        std::fs::write(metadata_path, metadata)?;
+        tracing::trace!(path=?metadata_path, "wrote metadata to disk");
 
         Ok(())
     }
@@ -367,8 +373,6 @@ impl FileManager {
         // remove the file from the local git repo
         std::fs::remove_file(&removed_metadata.repo_path)?;
         tracing::trace!("removed file from repo");
-
-        self.persist_metadata()?;
 
         tracing::trace!(removed=?removed_metadata, "removed managed file");
 
