@@ -71,7 +71,10 @@ impl FileManager {
     #[instrument(skip(self), fields(source_was_updated))]
     pub fn edit_managed_file(&self, path: Option<PathBuf>, skip_update: bool) -> Result<()> {
         let file_path = match path {
-            Some(path) => path,
+            Some(path) => {
+                let path = std::fs::canonicalize(path)?;
+                path
+            }
             None => {
                 let theme = ColorfulTheme::default();
                 let mut fuzzy_select = FuzzySelect::with_theme(&theme)
@@ -96,6 +99,7 @@ impl FileManager {
 
         tracing::trace!("got selected file path: {file_path:?}");
 
+        // FIXME: relative paths crash
         let file_metadata = self
             .metadata
             .metadata
