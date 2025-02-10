@@ -43,7 +43,7 @@ fn main() {
         return;
     }
 
-    let mut repo = Repo::open(&paths).unwrap();
+    let repo = Repo::open(&paths).unwrap();
 
     // NOTE: we have to checkout here if we want to reliably detect
     //       cache changes
@@ -66,7 +66,7 @@ fn main() {
         Command::List => conman::list(&paths),
         Command::Apply { no_confirm } => conman::apply(&paths, &repo, no_confirm),
         Command::Collect { path, no_confirm } => conman::collect(&paths, &config, path, no_confirm),
-        Command::Branch { name } => conman::change_branch(&repo, &name),
+        Command::Branch { name } => conman::change_branch(&mut config, &repo, &name),
         Command::Init => unreachable!("we handled this above"),
     };
 
