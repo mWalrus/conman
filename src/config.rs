@@ -6,6 +6,8 @@ use directories::BaseDirs;
 use serde::{Deserialize, Deserializer, Serialize};
 use tracing::instrument;
 
+const CONFIG_FILE_NAME: &str = "config.toml";
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     pub encryption: EncryptionConfig,
@@ -48,30 +50,13 @@ pub fn default_branch() -> String {
 
 impl Config {
     #[instrument]
-    pub fn read() -> Result<Self> {
-        let base_dirs = BaseDirs::new().unwrap();
+    pub fn read() -> Result<Option<Self>> {
+        let config = Self::config_dir()?;
+        let config_file = Self::config_file(&config);
 
-        let config = base_dirs.config_dir().join(APPLICATION_NAME);
-        if !std::fs::exists(&config).unwrap() {
-            std::fs::create_dir(&config).unwrap();
-            tracing::trace!("created $HOME/.config/{APPLICATION_NAME}");
-        }
-
-        let config_file = config.join("config.toml");
         let mut config_file = match File::open(&config_file) {
             Ok(file) => file,
-            Err(_) => {
-                println!("Config file not found, creating default...");
-                let default_config = Self::default();
-                let toml = toml::to_string(&default_config)?;
-                tracing::trace!("serialized default config");
-                std::fs::write(&config_file, toml)?;
-                println!(
-                    "Wrote empty config to '{}'. Please populate it!",
-                    config_file.display()
-                );
-                std::process::exit(0);
-            }
+            Err(_) => return Ok(None),
         };
 
         let mut contents = String::new();
@@ -80,7 +65,43 @@ impl Config {
         let config: Config = toml::de::from_str(&contents)?;
 
         tracing::trace!("read config");
+        Ok(Some(config))
+    }
+
+    #[instrument]
+    pub fn write_default_config() -> Result<()> {
+        let config = Self::config_dir()?;
+        let config_file = Self::config_file(&config);
+
+        println!("Config file not found, creating default...");
+        let default_config = Self::default();
+
+        let toml = toml::to_string(&default_config)?;
+        tracing::trace!("serialized default config");
+
+        std::fs::write(&config_file, toml)?;
+
+        println!(
+            "Wrote empty config to '{}'. Please populate it!",
+            config_file.display()
+        );
+
+        Ok(())
+    }
+
+    fn config_dir() -> Result<PathBuf> {
+        let base_dirs = BaseDirs::new().unwrap();
+
+        let config = base_dirs.config_dir().join(APPLICATION_NAME);
+        if !std::fs::exists(&config)? {
+            std::fs::create_dir(&config)?;
+            tracing::trace!("created $HOME/.config/{APPLICATION_NAME}");
+        }
         Ok(config)
+    }
+
+    fn config_file(config_dir: &PathBuf) -> PathBuf {
+        config_dir.join(CONFIG_FILE_NAME)
     }
 }
 

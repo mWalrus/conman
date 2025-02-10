@@ -78,4 +78,8 @@ pub enum Command {
         )]
         no_confirm: bool,
     },
+    Branch {
+        #[arg(help = "name of branch to checkout")]
+        name: String,
+    },
 }

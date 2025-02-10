@@ -6,14 +6,15 @@ use dialoguer::{theme::ColorfulTheme, Confirm};
 use tracing::instrument;
 
 use crate::{
+    config::Config,
     file::{CacheVerdict, FileManager},
     git::{Repo, StatusUpdate},
-    state::STATE,
+    paths::Paths,
 };
 
-#[instrument]
-pub fn init() -> Result<()> {
-    Repo::clone()?;
+#[instrument(skip(paths, config))]
+pub fn init(paths: &Paths, config: &Config) -> Result<()> {
+    Repo::clone(paths, config)?;
     Ok(())
 }
 
@@ -72,8 +73,8 @@ fn print_unsaved_changes_warning() {
     );
 }
 
-#[instrument(skip(repo))]
-pub fn save(repo: &Repo) -> Result<()> {
+#[instrument(skip(paths, repo))]
+pub fn save(paths: &Paths, repo: &Repo) -> Result<()> {
     let status_changes = match repo.status_changes() {
         Ok(Some(status_changes)) => status_changes,
         Ok(None) => {
@@ -85,7 +86,7 @@ pub fn save(repo: &Repo) -> Result<()> {
         }
     };
 
-    let file_manager = FileManager::new()?;
+    let file_manager = FileManager::new(&paths.metadata)?;
     let commit_message = construct_commit_message(&file_manager, status_changes);
     repo.commit_changes(commit_message)?;
 
@@ -119,38 +120,50 @@ fn construct_commit_message(
     commit_message
 }
 
-#[instrument(skip(repo))]
-pub fn pull(repo: &Repo) -> Result<()> {
+#[instrument(skip(repo, config))]
+pub fn pull(config: &Config, repo: &Repo) -> Result<()> {
     if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
     }
 
-    repo.pull()?;
+    repo.pull(config)?;
 
     Ok(())
 }
 
-#[instrument]
-pub fn edit(path: Option<PathBuf>, skip_update: bool) -> Result<()> {
-    FileManager::new()?.edit_managed_file(path, skip_update)?;
+#[instrument(skip(paths, config))]
+pub fn edit(
+    paths: &Paths,
+    config: &Config,
+    path: Option<PathBuf>,
+    skip_update: bool,
+) -> Result<()> {
+    let file_manager = FileManager::new(&paths.metadata)?;
+    file_manager.edit_managed_file(path, skip_update, &config.encryption.passphrase)?;
     Ok(())
 }
 
-#[instrument]
-pub fn collect(path: Option<PathBuf>, no_confirm: bool) -> Result<()> {
-    FileManager::new()?.collect(path, no_confirm)?;
+#[instrument(skip(paths, config))]
+pub fn collect(
+    paths: &Paths,
+    config: &Config,
+    path: Option<PathBuf>,
+    no_confirm: bool,
+) -> Result<()> {
+    let file_manager = FileManager::new(&paths.metadata)?;
+    file_manager.collect(path, no_confirm, &config.encryption.passphrase)?;
     Ok(())
 }
 
 /// Add a file from your local system to be managed by conman
-#[instrument]
-pub fn add(source: PathBuf, encrypt: bool) -> Result<()> {
+#[instrument(skip(paths, config))]
+pub fn add(paths: &Paths, config: &Config, source: PathBuf, encrypt: bool) -> Result<()> {
     let source_path = std::fs::canonicalize(source)?;
 
     tracing::trace!(source=?source_path, "canonicalized source path");
 
-    let mut file_manager = FileManager::new()?;
+    let mut file_manager = FileManager::new(&paths.metadata)?;
 
     // we return if the file is already managed since we
     // don't want to do anything in this case
@@ -159,19 +172,24 @@ pub fn add(source: PathBuf, encrypt: bool) -> Result<()> {
         return Ok(());
     }
 
-    file_manager.manage(source_path, encrypt)?;
-    file_manager.persist_metadata()?;
-    file_manager.write_cache()?;
+    file_manager.manage(
+        source_path,
+        encrypt,
+        |from| paths.repo_local_file_path(from),
+        &config.encryption.passphrase,
+    )?;
+    file_manager.persist_metadata(&paths.metadata)?;
+    file_manager.write_cache(&paths.metadata_cache)?;
     tracing::trace!("done adding file");
 
     Ok(())
 }
 
-#[instrument]
-pub fn list() -> Result<()> {
+#[instrument(skip(paths))]
+pub fn list(paths: &Paths) -> Result<()> {
     tracing::trace!("listing managed files");
 
-    let file_manager = FileManager::new()?;
+    let file_manager = FileManager::new(&paths.metadata)?;
     let metadata = file_manager.metadata();
 
     println!("{}", "Managed files:".bold());
@@ -197,22 +215,24 @@ pub fn list() -> Result<()> {
     Ok(())
 }
 
-#[instrument]
-pub fn remove(path: PathBuf) -> Result<()> {
+#[instrument(skip(paths))]
+pub fn remove(paths: &Paths, path: PathBuf) -> Result<()> {
     tracing::trace!(to_remove=?path, "removing managed file");
-    let mut file_manager = FileManager::new()?;
+    let mut file_manager = FileManager::new(&paths.metadata)?;
     file_manager.remove(&path)?;
+    file_manager.persist_metadata(&paths.metadata)?;
+
     Ok(())
 }
 
-#[instrument(skip(repo))]
-pub fn apply(repo: &Repo, no_confirm: bool) -> Result<()> {
+#[instrument(skip(paths, repo))]
+pub fn apply(paths: &Paths, repo: &Repo, no_confirm: bool) -> Result<()> {
     if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
     }
 
-    let file_manager = FileManager::new()?;
+    let file_manager = FileManager::new(&paths.metadata)?;
 
     for entry in file_manager.metadata() {
         tracing::trace!(entry=?entry ,"handling file");
@@ -242,30 +262,28 @@ pub fn apply(repo: &Repo, no_confirm: bool) -> Result<()> {
     Ok(())
 }
 
-#[instrument(skip(repo))]
-pub fn push(repo: &Repo, override_branch: Option<&str>) -> Result<()> {
+#[instrument(skip(config, repo))]
+pub fn push(config: &Config, repo: &Repo, upstream_branch: &str) -> Result<()> {
     if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
     }
 
-    let branch_name = override_branch.unwrap_or(&STATE.config.upstream.branch);
-
-    repo.push(branch_name)?;
+    repo.push(config, &config.upstream.branch)?;
 
     Ok(())
 }
 
-#[instrument]
-pub fn verify_local_file_cache() -> Result<()> {
-    let mut file_manager = FileManager::new()?;
+#[instrument(skip(paths, config))]
+pub fn verify_local_file_cache(paths: &Paths, config: &Config) -> Result<()> {
+    let mut file_manager = FileManager::new(&paths.metadata)?;
 
-    let cache_verdict = file_manager.verify_cache()?;
+    let cache_verdict = file_manager.verify_cache(&paths.metadata_cache)?;
 
     tracing::trace!("got cache verdict: {cache_verdict:?}");
 
     match cache_verdict {
-        CacheVerdict::FullPopulate => file_manager.write_cache()?,
+        CacheVerdict::FullPopulate => file_manager.write_cache(&paths.metadata_cache)?,
         CacheVerdict::HandleDangling(dangling) => {
             println!(
                 "{}",
@@ -291,7 +309,12 @@ pub fn verify_local_file_cache() -> Result<()> {
                         println!("{}", "Deleted!".bold().green());
                     }
                     "manage" => {
-                        file_manager.manage(file.system_path, file.encrypted)?;
+                        file_manager.manage(
+                            file.system_path,
+                            file.encrypted,
+                            |from| paths.repo_local_file_path(from),
+                            &config.encryption.passphrase,
+                        )?;
                     }
                     "skip" => {
                         tracing::trace!("skipping file");
@@ -300,11 +323,19 @@ pub fn verify_local_file_cache() -> Result<()> {
                 }
             }
 
-            file_manager.persist_metadata()?;
-            file_manager.write_cache()?;
+            file_manager.persist_metadata(&paths.metadata)?;
+            file_manager.write_cache(&paths.metadata_cache)?;
         }
         CacheVerdict::DoNothing => {}
     };
 
+    Ok(())
+}
+
+pub fn change_branch(repo: &Repo, branch_name: &str) -> Result<()> {
+    // 1. update config
+    let config = Config::read()?;
+    // 2. checkout branch
+    // 3. set upstream
     Ok(())
 }

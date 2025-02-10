@@ -10,7 +10,10 @@ use git2::{
 };
 use tracing::instrument;
 
-use crate::{paths::METADATA_FILE_NAME, state::STATE};
+use crate::{
+    config::Config,
+    paths::{Paths, METADATA_FILE_NAME},
+};
 
 pub struct Repo {
     inner: Repository,
@@ -55,13 +58,11 @@ impl StatusType {
 }
 
 impl Repo {
-    #[instrument]
-    pub fn open() -> Result<Self> {
-        let repo_path = &*STATE.paths.repo;
-
-        tracing::trace!(path=?repo_path, "attempting to open repo");
-        let repo = Repository::open(&repo_path)?;
-        tracing::trace!(path=?repo_path, "opened repo");
+    #[instrument(skip(paths))]
+    pub fn open(paths: &Paths) -> Result<Self> {
+        tracing::trace!(path=?paths.repo, "attempting to open repo");
+        let repo = Repository::open(&paths.repo)?;
+        tracing::trace!(path=?paths.repo, "opened repo");
 
         Ok(Self { inner: repo })
     }
@@ -125,10 +126,11 @@ impl Repo {
         _url: &str,
         username_from_url: Option<&str>,
         _allowed_types: CredentialType,
+        key_file: Option<&PathBuf>,
     ) -> Result<Cred, Error> {
         let username = username_from_url.unwrap();
 
-        if let Some(key) = STATE.config.upstream.key_file.as_ref() {
+        if let Some(key) = key_file {
             tracing::trace!(username = username, key = ?key, "built ssh credentials");
             Cred::ssh_key(username, None, key, None)
         } else {
@@ -141,17 +143,22 @@ impl Repo {
         }
     }
 
-    #[instrument]
-    pub fn clone() -> Result<()> {
-        let repo_path = &*STATE.paths.repo;
-
-        if let Ok(true) = std::fs::exists(&repo_path) {
+    #[instrument(skip(paths))]
+    pub fn clone(paths: &Paths, config: &Config) -> Result<()> {
+        if let Ok(true) = std::fs::exists(&paths.repo) {
             tracing::trace!("repo path already exists, skipping clone");
             return Ok(());
         }
 
         let mut remote_callbacks = RemoteCallbacks::new();
-        remote_callbacks.credentials(Self::credentials);
+        remote_callbacks.credentials(|url, username_from_url, allowed_types| {
+            Self::credentials(
+                url,
+                username_from_url,
+                allowed_types,
+                config.upstream.key_file.as_ref(),
+            )
+        });
 
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(remote_callbacks);
@@ -161,10 +168,10 @@ impl Repo {
 
         tracing::trace!("finished building repo options");
 
-        let url = &STATE.config.upstream.url;
+        let url = &config.upstream.url;
 
         tracing::trace!(url = url, "attempting to clone from upstream");
-        let repo = builder.clone(url, &repo_path)?;
+        let repo = builder.clone(url, &paths.repo)?;
         tracing::trace!(url = url, "cloned repo from upstream");
 
         let repo_is_empty = repo.is_empty()?;
@@ -176,11 +183,11 @@ impl Repo {
             repo.make_initial_commit()?;
             repo.checkout(&branch)?;
             repo.set_upstream(&branch)?;
-            repo.push(&branch)?;
+            repo.push(config, &branch)?;
         }
 
-        repo.checkout(&STATE.config.upstream.branch)?;
-        repo.set_upstream(&STATE.config.upstream.branch)?;
+        repo.checkout(&config.upstream.branch)?;
+        repo.set_upstream(&config.upstream.branch)?;
 
         Ok(())
     }
@@ -413,15 +420,24 @@ impl Repo {
         Ok(())
     }
 
-    #[instrument(skip(self), fields(remote = remote.name()))]
-    fn fetch<'r>(&'r self, refs: &[&str], remote: &'r mut Remote) -> Result<AnnotatedCommit<'r>> {
+    #[instrument(skip(self, config), fields(remote = remote.name()))]
+    fn fetch<'r>(&'r self, config: &Config, remote: &'r mut Remote) -> Result<AnnotatedCommit<'r>> {
         // FIXME: add callbacks to report progress
         let mut remote_callbacks = RemoteCallbacks::new();
-        remote_callbacks.credentials(Self::credentials);
+        remote_callbacks.credentials(|url, username_from_url, allowed_types| {
+            Self::credentials(
+                url,
+                username_from_url,
+                allowed_types,
+                config.upstream.key_file.as_ref(),
+            )
+        });
 
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(remote_callbacks);
         fetch_options.download_tags(AutotagOption::All);
+
+        let refs = &[&config.upstream.branch];
 
         remote.fetch(refs, Some(&mut fetch_options), None)?;
 
@@ -440,16 +456,14 @@ impl Repo {
         Ok(fetch_commit)
     }
 
-    #[instrument(skip(self))]
-    pub fn pull(&self) -> Result<()> {
+    #[instrument(skip(self, config))]
+    pub fn pull(&self, config: &Config) -> Result<()> {
         let remote_name = "origin";
-        let remote_branch = &STATE.config.upstream.branch;
-
         let mut remote = self.inner.find_remote(&remote_name)?;
 
-        let fetch_commit = self.fetch(&[remote_branch], &mut remote)?;
+        let fetch_commit = self.fetch(config, &mut remote)?;
 
-        self.merge(remote_branch, fetch_commit)?;
+        self.merge(&config.upstream.branch, fetch_commit)?;
 
         Ok(())
     }
@@ -540,8 +554,8 @@ impl Repo {
         self.status_changes().map(|changes| changes.is_some())
     }
 
-    #[instrument(skip(self))]
-    pub fn push(&self, branch_name: &str) -> Result<()> {
+    #[instrument(skip(self, config))]
+    pub fn push(&self, config: &Config, branch_name: &str) -> Result<()> {
         let mut remote_callbacks = RemoteCallbacks::new();
         remote_callbacks.push_update_reference(|refname, status| {
             let _span = tracing::trace_span!("push_update_reference").entered();
@@ -555,7 +569,14 @@ impl Repo {
             }
             Ok(())
         });
-        remote_callbacks.credentials(Self::credentials);
+        remote_callbacks.credentials(|url, username_from_url, allowed_types| {
+            Self::credentials(
+                url,
+                username_from_url,
+                allowed_types,
+                config.upstream.key_file.as_ref(),
+            )
+        });
 
         let mut push_options = PushOptions::new();
         push_options.remote_callbacks(remote_callbacks);
