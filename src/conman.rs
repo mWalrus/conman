@@ -332,10 +332,13 @@ pub fn verify_local_file_cache(paths: &Paths, config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn change_branch(repo: &Repo, branch_name: &str) -> Result<()> {
-    // 1. update config
-    let config = Config::read()?;
-    // 2. checkout branch
-    // 3. set upstream
+#[instrument(skip(config, repo))]
+pub fn change_branch(config: &mut Config, repo: &Repo, branch_name: &str) -> Result<()> {
+    config.upstream.branch = branch_name.to_string();
+
+    repo.checkout(&config.upstream.branch)?;
+    repo.set_upstream(&config.upstream.branch)?;
+
+    config.write()?;
     Ok(())
 }
