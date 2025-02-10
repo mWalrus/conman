@@ -176,7 +176,7 @@ impl Repo {
 
         let repo_is_empty = repo.is_empty()?;
 
-        let mut repo = Self { inner: repo };
+        let repo = Self { inner: repo };
 
         if repo_is_empty {
             let branch = crate::config::default_branch();
@@ -193,7 +193,7 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    pub fn checkout(&mut self, branch_name: &str) -> Result<()> {
+    pub fn checkout(&self, branch_name: &str) -> Result<()> {
         if self.head_matches(branch_name)? {
             return Ok(());
         }
