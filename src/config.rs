@@ -68,6 +68,20 @@ impl Config {
         Ok(Some(config))
     }
 
+    #[instrument(skip(self))]
+    pub fn write(&self) -> Result<()> {
+        let config = Self::config_dir()?;
+        let config_file = Self::config_file(&config);
+
+        let toml = toml::to_string(&self)?;
+        tracing::trace!("serialized config");
+
+        std::fs::write(&config_file, toml)?;
+        tracing::trace!("wrote config to {}", config_file.display());
+
+        Ok(())
+    }
+
     #[instrument]
     pub fn write_default_config() -> Result<()> {
         let config = Self::config_dir()?;
