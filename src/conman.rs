@@ -6,8 +6,7 @@ use dialoguer::{theme::ColorfulTheme, Confirm};
 use tracing::instrument;
 
 use crate::{
-    cache::branch::BranchCache,
-    file::FileManager,
+    file::{CacheVerdict, FileManager},
     git::{Repo, StatusUpdate},
     state::STATE,
 };
@@ -18,16 +17,13 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
-#[instrument]
-pub fn diff(_no_color: bool) -> Result<()> {
-    let _repo = Repo::open()?;
+#[instrument(skip(_repo))]
+pub fn diff(_repo: &Repo, _no_color: bool) -> Result<()> {
     Ok(())
 }
 
-#[instrument]
-pub fn status() -> Result<()> {
-    let repo = Repo::open()?;
-
+#[instrument(skip(repo))]
+pub fn status(repo: &Repo) -> Result<()> {
     let status_changes = match repo.status_changes() {
         Ok(Some(status_changes)) => status_changes,
         Ok(None) => {
@@ -76,10 +72,8 @@ fn print_unsaved_changes_warning() {
     );
 }
 
-#[instrument]
-pub fn save() -> Result<()> {
-    let repo = Repo::open()?;
-
+#[instrument(skip(repo))]
+pub fn save(repo: &Repo) -> Result<()> {
     let status_changes = match repo.status_changes() {
         Ok(Some(status_changes)) => status_changes,
         Ok(None) => {
@@ -125,9 +119,8 @@ fn construct_commit_message(
     commit_message
 }
 
-#[instrument]
-pub fn pull() -> Result<()> {
-    let repo = Repo::open()?;
+#[instrument(skip(repo))]
+pub fn pull(repo: &Repo) -> Result<()> {
     if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
@@ -167,6 +160,8 @@ pub fn add(source: PathBuf, encrypt: bool) -> Result<()> {
     }
 
     file_manager.manage(source_path, encrypt)?;
+    file_manager.persist_metadata()?;
+    file_manager.write_cache()?;
     tracing::trace!("done adding file");
 
     Ok(())
@@ -210,9 +205,9 @@ pub fn remove(path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-#[instrument]
-pub fn apply(no_confirm: bool) -> Result<()> {
-    if Repo::open()?.check_has_unsaved()? {
+#[instrument(skip(repo))]
+pub fn apply(repo: &Repo, no_confirm: bool) -> Result<()> {
+    if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
     }
@@ -247,10 +242,8 @@ pub fn apply(no_confirm: bool) -> Result<()> {
     Ok(())
 }
 
-#[instrument]
-pub fn push(override_branch: Option<&str>) -> Result<()> {
-    let repo = Repo::open()?;
-
+#[instrument(skip(repo))]
+pub fn push(repo: &Repo, override_branch: Option<&str>) -> Result<()> {
     if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
@@ -266,60 +259,52 @@ pub fn push(override_branch: Option<&str>) -> Result<()> {
 #[instrument]
 pub fn verify_local_file_cache() -> Result<()> {
     let mut file_manager = FileManager::new()?;
-    let mut branch_cache = BranchCache::read()?;
 
-    if branch_cache.is_empty() && file_manager.metadata_is_empty() {
-        tracing::trace!("metadata and cache is empty, there is nothing to do");
-        return Ok(());
-    }
+    let cache_verdict = file_manager.verify_cache()?;
 
-    if branch_cache.is_empty() && !file_manager.metadata_is_empty() {
-        tracing::trace!("branch cache is empty but metadata has data. updating branch cache");
-        branch_cache.update(file_manager.metadata());
-        branch_cache.write()?;
-        return Ok(());
-    }
+    tracing::trace!("got cache verdict: {cache_verdict:?}");
 
-    if !branch_cache.has_changes(file_manager.metadata())? {
-        tracing::trace!("no changes found");
-        return Ok(());
-    }
+    match cache_verdict {
+        CacheVerdict::FullPopulate => file_manager.write_cache()?,
+        CacheVerdict::HandleDangling(dangling) => {
+            println!(
+                "{}",
+                "Detected differences in managed files since last run!".bold()
+            );
 
-    let dangling_files = branch_cache.dangling_entries(file_manager.metadata());
-    tracing::trace!("found {} dangling files", dangling_files.len());
+            let file_options = ["skip", "delete", "manage"];
 
-    println!(
-        "{}",
-        "Detected differences in managed files since last run!".bold()
-    );
+            for file in dangling.into_iter() {
+                let choice = dialoguer::Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt(format!(
+                        "Handle dangling file {}",
+                        file.system_path.display()
+                    ))
+                    .items(&file_options)
+                    .default(0)
+                    .interact()?;
 
-    let file_options = ["skip", "delete", "manage"];
-
-    for (path, encrypted) in dangling_files {
-        let choice = dialoguer::Select::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!("Delete dangling file {}", path.display()))
-            .items(&file_options)
-            .default(0)
-            .interact()?;
-
-        match file_options[choice] {
-            "delete" => {
-                std::fs::remove_file(&path)?;
-                tracing::trace!("deleted file {}", path.display());
-                println!("{}", "Deleted!".bold().green());
+                match file_options[choice] {
+                    "delete" => {
+                        std::fs::remove_file(&file.system_path)?;
+                        tracing::trace!("deleted file {}", file.system_path.display());
+                        println!("{}", "Deleted!".bold().green());
+                    }
+                    "manage" => {
+                        file_manager.manage(file.system_path, file.encrypted)?;
+                    }
+                    "skip" => {
+                        tracing::trace!("skipping file");
+                    }
+                    _ => unreachable!(),
+                }
             }
-            "manage" => {
-                file_manager.manage(path, encrypted)?;
-            }
-            "skip" => {
-                tracing::trace!("skipping file");
-            }
-            _ => unreachable!(),
+
+            file_manager.persist_metadata()?;
+            file_manager.write_cache()?;
         }
-    }
-
-    branch_cache.update(file_manager.metadata());
-    branch_cache.write()?;
+        CacheVerdict::DoNothing => {}
+    };
 
     Ok(())
 }

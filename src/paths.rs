@@ -13,11 +13,13 @@ use crate::config::Config;
 
 pub(crate) const APPLICATION_NAME: &str = "conman";
 pub(crate) const METADATA_FILE_NAME: &str = "_conman_internal_metadata.toml";
+pub(crate) const METADATA_CACHE_FILE_NAME: &str = "_metadata_cache.toml";
 
 pub struct Paths {
     pub repo: PathBuf,
     pub cache: PathBuf,
     pub metadata: PathBuf,
+    pub metadata_cache: PathBuf,
 }
 
 impl Paths {
@@ -41,11 +43,13 @@ impl Paths {
         let repo = cache.join(repo_name);
 
         let metadata = repo.join(METADATA_FILE_NAME);
+        let metadata_cache = cache.join(METADATA_CACHE_FILE_NAME);
 
         Ok(Self {
             cache,
             repo,
             metadata,
+            metadata_cache,
         })
     }
 

@@ -11,7 +11,7 @@ pub struct Args {
 // FIXME: additional commands
 //            - create-config (or something like that)
 //            - branch (branch out from current branch to create an offshoot config)
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, PartialEq, Eq)]
 pub enum Command {
     #[command(about = "clones the repository from upstream (does nothing if already cloned)")]
     Init,

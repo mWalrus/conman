@@ -60,27 +60,14 @@ impl Repo {
         let repo_path = &*STATE.paths.repo;
 
         tracing::trace!(path=?repo_path, "attempting to open repo");
-        let repo = Repository::open(&repo_path).unwrap();
+        let repo = Repository::open(&repo_path)?;
         tracing::trace!(path=?repo_path, "opened repo");
 
-        let mut repo = Self::new_internal(repo);
-
-        let branch = &STATE.config.upstream.branch;
-        if !repo.head_matches(branch)? {
-            repo.checkout(branch)?;
-            repo.set_upstream(branch)?;
-        }
-
-        Ok(repo)
-    }
-
-    #[inline(always)]
-    fn new_internal(repo: Repository) -> Self {
-        Self { inner: repo }
+        Ok(Self { inner: repo })
     }
 
     #[instrument(skip(self))]
-    fn head_matches(&self, branch_name: &str) -> Result<bool> {
+    pub fn head_matches(&self, branch_name: &str) -> Result<bool> {
         let refname = format!("refs/heads/{branch_name}");
 
         let head = self.inner.find_reference("HEAD")?;
@@ -95,7 +82,7 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    fn set_upstream(&self, branch_name: &str) -> Result<()> {
+    pub fn set_upstream(&self, branch_name: &str) -> Result<()> {
         let mut branch = self
             .inner
             .find_branch(branch_name, git2::BranchType::Local)?;
@@ -182,7 +169,7 @@ impl Repo {
 
         let repo_is_empty = repo.is_empty()?;
 
-        let mut repo = Self::new_internal(repo);
+        let mut repo = Self { inner: repo };
 
         if repo_is_empty {
             let branch = crate::config::default_branch();
@@ -199,7 +186,7 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    fn checkout(&mut self, branch_name: &str) -> Result<()> {
+    pub fn checkout(&mut self, branch_name: &str) -> Result<()> {
         if self.head_matches(branch_name)? {
             return Ok(());
         }

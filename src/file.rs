@@ -12,6 +12,13 @@ use tracing::instrument;
 
 use crate::state::STATE;
 
+#[derive(Debug)]
+pub enum CacheVerdict {
+    FullPopulate,
+    HandleDangling(Vec<FileData>),
+    DoNothing,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct FileData {
     #[serde(
@@ -33,15 +40,18 @@ pub struct FileManager {
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 struct Metadata {
-    metadata: Vec<FileData>,
+    files: Vec<FileData>,
 }
 
 impl FileManager {
     #[instrument]
     pub fn new() -> Result<Self> {
-        let metadata_path = &STATE.paths.metadata;
+        let metadata = Self::read_metadata(&STATE.paths.metadata)?;
+        Ok(Self { metadata })
+    }
 
-        let metadata = match File::open(&metadata_path) {
+    fn read_metadata(path: &PathBuf) -> Result<Metadata> {
+        let metadata = match File::open(&path) {
             Ok(mut file) => {
                 tracing::trace!("found file metadata file");
                 let mut contents = String::new();
@@ -55,13 +65,58 @@ impl FileManager {
                 Metadata::default()
             }
         };
-
-        Ok(Self { metadata })
+        Ok(metadata)
     }
 
-    pub fn metadata_is_empty(&self) -> bool {
-        self.metadata.metadata.is_empty()
+    #[instrument(skip(self))]
+    pub fn verify_cache(&self) -> Result<CacheVerdict> {
+        let cache = Self::read_metadata(&STATE.paths.metadata_cache)?;
+
+        if cache.files.is_empty() && !self.metadata.files.is_empty() {
+            return Ok(CacheVerdict::FullPopulate);
+        }
+
+        if cache.files.is_empty() && self.metadata.files.is_empty() {
+            return Ok(CacheVerdict::DoNothing);
+        }
+
+        let dangling_files = self.dangling_files(&cache);
+
+        if dangling_files.is_empty() {
+            return Ok(CacheVerdict::DoNothing);
+        }
+
+        tracing::trace!("got {} dangling entries", dangling_files.len());
+
+        Ok(CacheVerdict::HandleDangling(dangling_files))
     }
+
+    fn dangling_files(&self, other: &Metadata) -> Vec<FileData> {
+        other
+            .files
+            .iter()
+            .filter(|theirs| {
+                self.metadata
+                    .files
+                    .iter()
+                    .find(|ours| ours.system_path.eq(&theirs.system_path))
+                    .is_none()
+            })
+            .map(|theirs| theirs.clone())
+            .collect()
+    }
+
+    pub fn write_cache(&self) -> Result<()> {
+        let cache = toml::to_string(&self.metadata)?;
+        tracing::trace!("serialized branch cache");
+
+        let path = &STATE.paths.metadata_cache;
+        std::fs::write(path, cache)?;
+        tracing::trace!("wrote cache to {}", path.display());
+
+        Ok(())
+    }
+
     /// set up the encryptor used for `age` file encryption
     fn init_encryptor(secret: String) -> Encryptor {
         let passphrase = SecretString::from(secret);
@@ -71,17 +126,14 @@ impl FileManager {
     #[instrument(skip(self), fields(source_was_updated))]
     pub fn edit_managed_file(&self, path: Option<PathBuf>, skip_update: bool) -> Result<()> {
         let file_path = match path {
-            Some(path) => {
-                let path = std::fs::canonicalize(path)?;
-                path
-            }
+            Some(path) => path,
             None => {
                 let theme = ColorfulTheme::default();
                 let mut fuzzy_select = FuzzySelect::with_theme(&theme)
                     .default(0)
                     .with_prompt("Search for a file to edit");
 
-                for file in self.metadata.metadata.iter() {
+                for file in self.metadata.files.iter() {
                     fuzzy_select = fuzzy_select.item(file.system_path.to_string_lossy());
                 }
 
@@ -89,7 +141,7 @@ impl FileManager {
 
                 let selected = self
                     .metadata
-                    .metadata
+                    .files
                     .get(selected_index)
                     .expect("failed to find just selected item somehow");
 
@@ -101,7 +153,7 @@ impl FileManager {
 
         let file_metadata = self
             .metadata
-            .metadata
+            .files
             .iter()
             .find(|file| file.system_path.eq(&file_path))
             .unwrap();
@@ -144,7 +196,7 @@ impl FileManager {
 
     #[instrument(skip(self))]
     pub fn collect(&self, path: Option<PathBuf>, no_confirm: bool) -> Result<()> {
-        let mut file_metadata_collection = self.metadata.metadata.clone();
+        let mut file_metadata_collection = self.metadata.files.clone();
         if let Some(p) = path {
             file_metadata_collection.retain(|fm| fm.system_path.eq(&p));
         }
@@ -218,7 +270,6 @@ impl FileManager {
             self.copy_unencrypted(&from, &to)?;
         }
         self.add_file_to_metadata(from, to, encrypt)?;
-        self.persist_metadata()?;
         Ok(())
     }
 
@@ -230,14 +281,14 @@ impl FileManager {
             repo_path: to,
             encrypted: encrypt,
         };
-        self.metadata.metadata.push(new_metadata);
+        self.metadata.files.push(new_metadata);
         Ok(())
     }
 
     /// check whether the source path is already managed by conman
     #[instrument(skip(self))]
     pub fn is_already_managed(&self, from: &PathBuf) -> bool {
-        for managed_file in self.metadata.metadata.iter() {
+        for managed_file in self.metadata.files.iter() {
             if managed_file.system_path.eq(from) {
                 return true;
             }
@@ -281,7 +332,7 @@ impl FileManager {
 
     /// persist file metadata to disk
     #[instrument(skip(self))]
-    fn persist_metadata(&self) -> Result<()> {
+    pub fn persist_metadata(&self) -> Result<()> {
         let metadata = toml::to_string(&self.metadata)?;
 
         std::fs::write(&STATE.paths.metadata, metadata)?;
@@ -292,7 +343,7 @@ impl FileManager {
 
     /// helper to access metadata
     pub fn metadata(&self) -> &Vec<FileData> {
-        &self.metadata.metadata
+        &self.metadata.files
     }
 
     /// unmanage the file at the given path
@@ -300,7 +351,7 @@ impl FileManager {
     pub fn remove(&mut self, path: &PathBuf) -> Result<()> {
         let maybe_index = self
             .metadata
-            .metadata
+            .files
             .iter()
             .position(|managed_file| managed_file.system_path.eq(path));
 
@@ -310,8 +361,8 @@ impl FileManager {
 
         tracing::trace!(index = index, "found index of path to remove");
 
-        let removed_metadata = self.metadata.metadata.remove(index);
-        tracing::trace!(remaining = ?self.metadata.metadata, "removed file metadata");
+        let removed_metadata = self.metadata.files.remove(index);
+        tracing::trace!(remaining = ?self.metadata.files, "removed file metadata");
 
         // remove the file from the local git repo
         std::fs::remove_file(&removed_metadata.repo_path)?;
@@ -326,7 +377,7 @@ impl FileManager {
 
     pub fn find_path(&self, file_name: &PathBuf) -> Option<&PathBuf> {
         self.metadata
-            .metadata
+            .files
             .iter()
             .find(|file| file.repo_path.ends_with(file_name.as_os_str()))
             .map(|file| &file.system_path)
