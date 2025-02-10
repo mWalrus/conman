@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
-use crate::{file::FileMetadata, state::STATE};
+use crate::{file::FileData, state::STATE};
 
 pub(crate) const BRANCH_CACHE_FILE_NAME: &str = "__branch_cache";
 
@@ -45,7 +45,7 @@ impl BranchCache {
         self.name.is_empty() && self.files.is_empty()
     }
 
-    pub fn dangling_entries<'m>(&'m self, metadata: &'m Vec<FileMetadata>) -> Vec<(PathBuf, bool)> {
+    pub fn dangling_entries<'m>(&'m self, metadata: &'m Vec<FileData>) -> Vec<(PathBuf, bool)> {
         self.files
             .iter()
             .filter(|file| {
@@ -67,7 +67,7 @@ impl BranchCache {
     }
 
     #[instrument(skip(self, metadata))]
-    pub fn update(&mut self, metadata: &Vec<FileMetadata>) {
+    pub fn update(&mut self, metadata: &Vec<FileData>) {
         self.name = STATE.config.upstream.branch.clone();
         self.files = metadata
             .clone()
@@ -77,7 +77,7 @@ impl BranchCache {
         tracing::trace!("updated branch cache");
     }
 
-    pub fn has_changes(&self, metadata: &Vec<FileMetadata>) -> Result<bool> {
+    pub fn has_changes(&self, metadata: &Vec<FileData>) -> Result<bool> {
         let has_changes = self.files.iter().any(|file| {
             metadata
                 .iter()

@@ -13,7 +13,7 @@ use tracing::instrument;
 use crate::state::STATE;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct FileMetadata {
+pub struct FileData {
     #[serde(
         deserialize_with = "deserialize_metadata_path",
         serialize_with = "serialize_metadata_path"
@@ -33,7 +33,7 @@ pub struct FileManager {
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 struct Metadata {
-    metadata: Vec<FileMetadata>,
+    metadata: Vec<FileData>,
 }
 
 impl FileManager {
@@ -131,7 +131,7 @@ impl FileManager {
         Ok(())
     }
 
-    fn copy_managed_file(&self, metadata: &FileMetadata) -> Result<()> {
+    fn copy_managed_file(&self, metadata: &FileData) -> Result<()> {
         if metadata.encrypted {
             let passphrase = STATE.config.encryption.passphrase.clone();
             let encryptor = Self::init_encryptor(passphrase);
@@ -225,7 +225,7 @@ impl FileManager {
     /// add metadata about the newly added file to the conman store
     #[instrument(skip(self))]
     fn add_file_to_metadata(&mut self, from: PathBuf, to: PathBuf, encrypt: bool) -> Result<()> {
-        let new_metadata = FileMetadata {
+        let new_metadata = FileData {
             system_path: from,
             repo_path: to,
             encrypted: encrypt,
@@ -291,7 +291,7 @@ impl FileManager {
     }
 
     /// helper to access metadata
-    pub fn metadata(&self) -> &Vec<FileMetadata> {
+    pub fn metadata(&self) -> &Vec<FileData> {
         &self.metadata.metadata
     }
 
