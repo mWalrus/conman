@@ -62,7 +62,7 @@ fn main() {
         Command::Push => conman::push(&config, &repo, &config.upstream.branch),
         Command::Pull => conman::pull(&config, &repo),
         Command::Add { files, encrypt } => conman::add(&paths, &config, files, encrypt),
-        Command::Remove { path } => conman::remove(&paths, path),
+        Command::Remove { files } => conman::remove(&paths, files),
         Command::List => conman::list(&paths),
         Command::Apply { no_confirm } => conman::apply(&paths, &config, &repo, no_confirm),
         Command::Discard { no_confirm } => conman::discard(&paths, &config, &repo, no_confirm),

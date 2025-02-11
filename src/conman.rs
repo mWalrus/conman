@@ -280,14 +280,16 @@ pub fn list(paths: &Paths) -> Result<()> {
 }
 
 #[instrument(skip(paths))]
-pub fn remove(paths: &Paths, system_path: PathBuf) -> Result<()> {
+pub fn remove(paths: &Paths, files: Vec<PathBuf>) -> Result<()> {
     let mut metadata = Metadata::read(&paths.metadata)?;
 
-    let Some(file_data) = metadata.unmanage_file(&system_path)? else {
-        return Ok(());
-    };
+    for file in files {
+        let Some(file_data) = metadata.unmanage_file(&file)? else {
+            return Ok(());
+        };
 
-    file::remove_from_repo(&file_data)?;
+        file::remove_from_repo(&file_data)?;
+    }
 
     metadata.persist()?;
     Ok(())

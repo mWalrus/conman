@@ -12,7 +12,6 @@ pub struct Args {
 //            - create-config (or something like that)
 //
 // FIXME: updates to existing commands:
-//            - remove: allow multiple files
 //            - collect: allow specifying multiple files
 //            - branch: allow listing branches
 #[derive(Subcommand, Debug, PartialEq, Eq)]
@@ -61,7 +60,7 @@ pub enum Command {
     #[command(about = "remove a managed file")]
     Remove {
         #[arg(help = "relative or absolute path to file")]
-        path: PathBuf,
+        files: Vec<PathBuf>,
     },
     #[command(about = "apply managed configuration")]
     Apply {
