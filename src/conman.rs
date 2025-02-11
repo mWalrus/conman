@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use colored::Colorize;
-use dialoguer::{theme::ColorfulTheme, Confirm};
+use dialoguer::{theme::ColorfulTheme, Confirm, FuzzySelect};
 use tracing::instrument;
 
 use crate::{
     config::Config,
-    file::{CacheVerdict, FileManager},
+    file::{self, CacheVerdict, FileData, Metadata},
     git::{Repo, StatusUpdate},
     paths::Paths,
 };
@@ -86,32 +86,29 @@ pub fn save(paths: &Paths, repo: &Repo) -> Result<()> {
         }
     };
 
-    let file_manager = FileManager::new(&paths.metadata)?;
-    let commit_message = construct_commit_message(&file_manager, status_changes);
+    let metadata = Metadata::read(&paths.metadata)?;
+
+    let commit_message = construct_commit_message(&metadata, status_changes);
     repo.commit_changes(commit_message)?;
 
     Ok(())
 }
 
-#[instrument(skip(file_manager, status_changes))]
-fn construct_commit_message(
-    file_manager: &FileManager,
-    status_changes: Vec<StatusUpdate>,
-) -> String {
-    // we need this to find the system path of each file
+#[instrument(skip(metadata, status_changes))]
+fn construct_commit_message(metadata: &Metadata, status_changes: Vec<StatusUpdate>) -> String {
     let mut commit_message = "system-update: updating files\n\n".to_string();
     let change_count = status_changes.len();
 
     for (i, entry) in status_changes.into_iter().enumerate() {
         let file_path = entry.old.or(entry.new).unwrap();
-        let Some(file_path) = file_manager.find_path(&file_path) else {
+        let Some(file_data) = metadata.get_file_data_where_repo_path_ends_with(&file_path) else {
             continue;
         };
 
         let update = format!(
             "{}: {}{}",
             entry.status.to_str(),
-            file_path.display(),
+            file_data.system_path.display(),
             if i + 1 == change_count { "" } else { "\n" }
         );
 
@@ -139,8 +136,49 @@ pub fn edit(
     path: Option<PathBuf>,
     skip_update: bool,
 ) -> Result<()> {
-    let file_manager = FileManager::new(&paths.metadata)?;
-    file_manager.edit_managed_file(path, skip_update, &config.encryption.passphrase)?;
+    let metadata = Metadata::read(&paths.metadata)?;
+
+    let maybe_file_data = match path {
+        Some(path) => metadata.get_file_data_by_system_path(&path),
+        None => {
+            let theme = ColorfulTheme::default();
+            let mut fuzzy_select = FuzzySelect::with_theme(&theme)
+                .default(0)
+                .with_prompt("Search for a file to edit");
+
+            for file in metadata.files.iter() {
+                fuzzy_select = fuzzy_select.item(file.system_path.to_string_lossy());
+            }
+
+            let selected_index = fuzzy_select.interact()?;
+
+            metadata.get_file_data_by_index(selected_index)
+        }
+    };
+
+    let Some(file_data) = maybe_file_data else {
+        return Ok(());
+    };
+
+    edit::edit_file(&file_data.system_path)?;
+
+    tracing::trace!("user done editing");
+
+    if skip_update {
+        tracing::trace!("skipping updating internal copy of the file");
+        return Ok(());
+    }
+
+    let source_was_updated =
+        file::source_was_updated(&file_data.system_path, &file_data.repo_path)?;
+    tracing::Span::current().record("source_was_updated", source_was_updated);
+
+    if !source_was_updated {
+        tracing::trace!("skipping copy of identical files");
+        return Ok(());
+    }
+
+    file::copy_from_system(file_data, &config.encryption.passphrase)?;
     Ok(())
 }
 
@@ -148,52 +186,76 @@ pub fn edit(
 pub fn collect(
     paths: &Paths,
     config: &Config,
-    path: Option<PathBuf>,
+    maybe_specified_path: Option<PathBuf>,
     no_confirm: bool,
 ) -> Result<()> {
-    let file_manager = FileManager::new(&paths.metadata)?;
-    file_manager.collect(path, no_confirm, &config.encryption.passphrase)?;
+    let mut metadata = Metadata::read(&paths.metadata)?;
+
+    if let Some(specified_path) = maybe_specified_path {
+        metadata
+            .files
+            .retain(|file| file.system_path.eq(&specified_path));
+    }
+
+    for file in metadata.files.iter() {
+        if !file::source_was_updated(&file.system_path, &file.repo_path)? {
+            tracing::trace!("source has not been updated since last time");
+            continue;
+        }
+
+        if no_confirm {
+            file::copy_from_system(file, &config.encryption.passphrase)?;
+            continue;
+        }
+
+        let message = format!("Collect updated file '{}'?", file.system_path.display());
+        let confirmation = dialoguer::Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(message)
+            .interact()?;
+
+        tracing::trace!("user gave confirmation: {confirmation}");
+        if confirmation {
+            file::copy_from_system(file, &config.encryption.passphrase)?;
+        }
+    }
+
     Ok(())
 }
 
-/// Add a file from your local system to be managed by conman
 #[instrument(skip(paths, config))]
 pub fn add(paths: &Paths, config: &Config, source: PathBuf, encrypt: bool) -> Result<()> {
     let source_path = std::fs::canonicalize(source)?;
 
     tracing::trace!(source=?source_path, "canonicalized source path");
 
-    let mut file_manager = FileManager::new(&paths.metadata)?;
+    let mut metadata = Metadata::read(&paths.metadata)?;
 
-    // we return if the file is already managed since we
-    // don't want to do anything in this case
-    if file_manager.is_already_managed(&source_path) {
+    if metadata.file_is_already_managed(&source_path) {
         tracing::trace!("file is already managed, skipping");
         return Ok(());
     }
 
-    file_manager.manage(
-        source_path,
-        encrypt,
-        |from| paths.repo_local_file_path(from),
-        &config.encryption.passphrase,
-    )?;
-    file_manager.persist_metadata(&paths.metadata)?;
-    file_manager.write_cache(&paths.metadata_cache)?;
-    tracing::trace!("done adding file");
+    let destination_path = paths.repo_local_file_path(&source_path)?;
+
+    let file_data = FileData::new(source_path, destination_path, encrypt);
+
+    file::copy_from_system(&file_data, &config.encryption.passphrase)?;
+
+    metadata.manage_file(file_data);
+
+    metadata.persist()?;
+
+    file::write_cache(&metadata, &paths.metadata_cache)?;
 
     Ok(())
 }
 
 #[instrument(skip(paths))]
 pub fn list(paths: &Paths) -> Result<()> {
-    tracing::trace!("listing managed files");
-
-    let file_manager = FileManager::new(&paths.metadata)?;
-    let metadata = file_manager.metadata();
+    let metadata = Metadata::read(&paths.metadata)?;
 
     println!("{}", "Managed files:".bold());
-    for (i, file) in metadata.iter().enumerate() {
+    for (i, file) in metadata.files.iter().enumerate() {
         let encrypted_text = if file.encrypted {
             "true".green()
         } else {
@@ -217,27 +279,25 @@ pub fn list(paths: &Paths) -> Result<()> {
 
 #[instrument(skip(paths))]
 pub fn remove(paths: &Paths, path: PathBuf) -> Result<()> {
-    tracing::trace!(to_remove=?path, "removing managed file");
-    let mut file_manager = FileManager::new(&paths.metadata)?;
-    file_manager.remove(&path)?;
-    file_manager.persist_metadata(&paths.metadata)?;
-
+    let mut metadata = Metadata::read(&paths.metadata)?;
+    metadata.remove(&path)?;
+    metadata.persist()?;
     Ok(())
 }
 
-#[instrument(skip(paths, repo))]
-pub fn apply(paths: &Paths, repo: &Repo, no_confirm: bool) -> Result<()> {
+#[instrument(skip(paths, config, repo))]
+pub fn apply(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) -> Result<()> {
     if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
     }
 
-    let file_manager = FileManager::new(&paths.metadata)?;
+    let metadata = Metadata::read(&paths.metadata)?;
 
-    for entry in file_manager.metadata() {
-        tracing::trace!(entry=?entry ,"handling file");
+    for file_data in metadata.files.iter() {
+        tracing::trace!(entry=?file_data.system_path ,"handling file");
         if !no_confirm {
-            let prompt = format!("Do you want to apply '{}'", entry.system_path.display());
+            let prompt = format!("Do you want to apply '{}'", file_data.system_path.display());
             if let Ok(false) = Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt(prompt)
                 .interact()
@@ -246,7 +306,7 @@ pub fn apply(paths: &Paths, repo: &Repo, no_confirm: bool) -> Result<()> {
             }
         }
 
-        if let Some(parent) = entry.system_path.parent() {
+        if let Some(parent) = file_data.system_path.parent() {
             if !parent.exists() {
                 tracing::trace!("parent(s) does not exist");
                 std::fs::create_dir_all(parent)?;
@@ -254,9 +314,7 @@ pub fn apply(paths: &Paths, repo: &Repo, no_confirm: bool) -> Result<()> {
             }
         }
 
-        tracing::trace!("repo path: {}", entry.repo_path.display());
-        std::fs::copy(&entry.repo_path, &entry.system_path)?;
-        tracing::trace!(from=?entry.repo_path, to=?entry.system_path, "copied file");
+        file::copy_from_repo(file_data, &config.encryption.passphrase)?;
     }
 
     Ok(())
@@ -274,16 +332,18 @@ pub fn push(config: &Config, repo: &Repo, upstream_branch: &str) -> Result<()> {
     Ok(())
 }
 
-#[instrument(skip(paths, config))]
+#[instrument(skip(paths))]
 pub fn verify_local_file_cache(paths: &Paths, config: &Config) -> Result<()> {
-    let mut file_manager = FileManager::new(&paths.metadata)?;
+    let mut metadata = Metadata::read(&paths.metadata)?;
 
-    let cache_verdict = file_manager.verify_cache(&paths.metadata_cache)?;
+    let cache_verdict = file::verify_cache(&paths.metadata, &paths.metadata_cache)?;
 
     tracing::trace!("got cache verdict: {cache_verdict:?}");
 
     match cache_verdict {
-        CacheVerdict::FullPopulate => file_manager.write_cache(&paths.metadata_cache)?,
+        CacheVerdict::FullPopulate(metadata) => {
+            file::write_cache(&metadata, &paths.metadata_cache)?
+        }
         CacheVerdict::HandleDangling(dangling) => {
             println!(
                 "{}",
@@ -309,12 +369,8 @@ pub fn verify_local_file_cache(paths: &Paths, config: &Config) -> Result<()> {
                         println!("{}", "Deleted!".bold().green());
                     }
                     "manage" => {
-                        file_manager.manage(
-                            file.system_path,
-                            file.encrypted,
-                            |from| paths.repo_local_file_path(from),
-                            &config.encryption.passphrase,
-                        )?;
+                        file::copy_from_system(&file, &config.encryption.passphrase)?;
+                        metadata.manage_file(file);
                     }
                     "skip" => {
                         tracing::trace!("skipping file");
@@ -323,8 +379,8 @@ pub fn verify_local_file_cache(paths: &Paths, config: &Config) -> Result<()> {
                 }
             }
 
-            file_manager.persist_metadata(&paths.metadata)?;
-            file_manager.write_cache(&paths.metadata_cache)?;
+            metadata.persist()?;
+            file::write_cache(&metadata, &paths.metadata_cache)?;
         }
         CacheVerdict::DoNothing => {}
     };

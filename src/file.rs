@@ -4,15 +4,14 @@ use std::{
     path::PathBuf,
 };
 
-use age::{secrecy::SecretString, Encryptor};
+use age::{secrecy::SecretString, Decryptor, Encryptor};
 use anyhow::Result;
-use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::instrument;
 
 #[derive(Debug)]
 pub enum CacheVerdict {
-    FullPopulate,
+    FullPopulate(Metadata),
     HandleDangling(Vec<FileData>),
     DoNothing,
 }
@@ -32,24 +31,28 @@ pub struct FileData {
     pub encrypted: bool,
 }
 
-pub struct FileManager {
-    metadata: Metadata,
+impl FileData {
+    pub fn new(system_path: PathBuf, repo_path: PathBuf, encrypted: bool) -> Self {
+        Self {
+            system_path,
+            repo_path,
+            encrypted,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Default)]
-struct Metadata {
-    files: Vec<FileData>,
+pub struct Metadata {
+    #[serde(skip)]
+    path: PathBuf,
+    pub files: Vec<FileData>,
 }
 
-impl FileManager {
+impl Metadata {
+    /// read the `Metadata` at the given path
     #[instrument]
-    pub fn new(metadata_path: &PathBuf) -> Result<Self> {
-        let metadata = Self::read_metadata(&metadata_path)?;
-        Ok(Self { metadata })
-    }
-
-    fn read_metadata(path: &PathBuf) -> Result<Metadata> {
-        let metadata = match File::open(&path) {
+    pub fn read(path: &PathBuf) -> Result<Self> {
+        let mut metadata = match File::open(&path) {
             Ok(mut file) => {
                 tracing::trace!("found file metadata file");
                 let mut contents = String::new();
@@ -63,303 +66,54 @@ impl FileManager {
                 Metadata::default()
             }
         };
+
+        metadata.path = path.clone();
+
         Ok(metadata)
     }
 
-    #[instrument(skip(self))]
-    pub fn verify_cache(&self, cache_path: &PathBuf) -> Result<CacheVerdict> {
-        let cache = Self::read_metadata(cache_path)?;
-
-        if cache.files.is_empty() && !self.metadata.files.is_empty() {
-            return Ok(CacheVerdict::FullPopulate);
-        }
-
-        if cache.files.is_empty() && self.metadata.files.is_empty() {
-            return Ok(CacheVerdict::DoNothing);
-        }
-
-        let dangling_files = self.dangling_files(&cache);
-
-        if dangling_files.is_empty() {
-            return Ok(CacheVerdict::DoNothing);
-        }
-
-        tracing::trace!("got {} dangling entries", dangling_files.len());
-
-        Ok(CacheVerdict::HandleDangling(dangling_files))
+    /// get the `FileData` at the given index
+    pub fn get_file_data_by_index(&self, index: usize) -> Option<&FileData> {
+        self.files.get(index)
     }
 
-    fn dangling_files(&self, other: &Metadata) -> Vec<FileData> {
-        other
-            .files
+    ///  get the `FileData` holding the given system path
+    pub fn get_file_data_by_system_path(&self, system_path: &PathBuf) -> Option<&FileData> {
+        self.files
             .iter()
-            .filter(|theirs| {
-                self.metadata
-                    .files
-                    .iter()
-                    .find(|ours| ours.system_path.eq(&theirs.system_path))
-                    .is_none()
-            })
-            .map(|theirs| theirs.clone())
-            .collect()
+            .find(|file| file.system_path.eq(system_path))
     }
 
-    pub fn write_cache(&self, cache_path: &PathBuf) -> Result<()> {
-        let cache = toml::to_string(&self.metadata)?;
-        tracing::trace!("serialized branch cache");
-
-        std::fs::write(cache_path, cache)?;
-        tracing::trace!("wrote cache to {}", cache_path.display());
-
-        Ok(())
-    }
-
-    /// set up the encryptor used for `age` file encryption
-    fn init_encryptor(secret: String) -> Encryptor {
-        let passphrase = SecretString::from(secret);
-        Encryptor::with_user_passphrase(passphrase)
-    }
-
-    #[instrument(skip(self), fields(source_was_updated))]
-    pub fn edit_managed_file(
-        &self,
-        path: Option<PathBuf>,
-        skip_update: bool,
-        passphrase: &str,
-    ) -> Result<()> {
-        let file_path = match path {
-            Some(path) => path,
-            None => {
-                let theme = ColorfulTheme::default();
-                let mut fuzzy_select = FuzzySelect::with_theme(&theme)
-                    .default(0)
-                    .with_prompt("Search for a file to edit");
-
-                for file in self.metadata.files.iter() {
-                    fuzzy_select = fuzzy_select.item(file.system_path.to_string_lossy());
-                }
-
-                let selected_index = fuzzy_select.interact()?;
-
-                let selected = self
-                    .metadata
-                    .files
-                    .get(selected_index)
-                    .expect("failed to find just selected item somehow");
-
-                PathBuf::from(&selected.system_path)
-            }
-        };
-
-        tracing::trace!("got selected file path: {file_path:?}");
-
-        let file_metadata = self
-            .metadata
-            .files
+    /// find the `FileData` whose repo_path ends with the given path
+    pub fn get_file_data_where_repo_path_ends_with(&self, path: &PathBuf) -> Option<&FileData> {
+        self.files
             .iter()
-            .find(|file| file.system_path.eq(&file_path))
-            .unwrap();
-
-        tracing::trace!("found file with system path");
-
-        edit::edit_file(&file_metadata.system_path)?;
-
-        tracing::trace!("user done editing");
-
-        if skip_update {
-            tracing::trace!("skipping updating internal copy of the file");
-            return Ok(());
-        }
-
-        let source_was_updated =
-            self.source_was_updated(&file_metadata.system_path, &file_metadata.repo_path)?;
-        tracing::Span::current().record("source_was_updated", source_was_updated);
-
-        if !source_was_updated {
-            tracing::trace!("skipping copy of identical files");
-            return Ok(());
-        }
-
-        tracing::trace!("preparing to copy file contents");
-        self.copy_managed_file(file_metadata, passphrase)?;
-        Ok(())
-    }
-
-    fn copy_managed_file(&self, metadata: &FileData, passphrase: &str) -> Result<()> {
-        if metadata.encrypted {
-            let encryptor = Self::init_encryptor(passphrase.to_string());
-            self.copy_encrypted(encryptor, &metadata.system_path, &metadata.repo_path)?;
-        } else {
-            self.copy_unencrypted(&metadata.system_path, &metadata.repo_path)?;
-        }
-        Ok(())
-    }
-
-    #[instrument(skip(self))]
-    pub fn collect(&self, path: Option<PathBuf>, no_confirm: bool, passphrase: &str) -> Result<()> {
-        let mut file_metadata_collection = self.metadata.files.clone();
-        if let Some(p) = path {
-            file_metadata_collection.retain(|fm| fm.system_path.eq(&p));
-        }
-
-        for file in file_metadata_collection.iter() {
-            let source_was_updated = self.source_was_updated(&file.system_path, &file.repo_path)?;
-            if !source_was_updated {
-                tracing::trace!("source in unchanged, skipping");
-                continue;
-            }
-
-            if no_confirm {
-                tracing::trace!("no confirmation needed, copying");
-                self.copy_managed_file(file, passphrase)?;
-                continue;
-            }
-
-            let message = format!("Collect updated file '{}'?", file.system_path.display());
-            let confirmation = dialoguer::Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(message)
-                .interact()?;
-
-            tracing::trace!("user gave confirmation: {confirmation}");
-            if confirmation {
-                self.copy_managed_file(file, passphrase)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Compares two files' metadata to check for differences
-    #[instrument(skip(self, source, dest))]
-    fn source_was_updated(&self, source: &PathBuf, dest: &PathBuf) -> Result<bool> {
-        let source_metadata = std::fs::metadata(source)?;
-        let dest_metadata = std::fs::metadata(dest)?;
-
-        tracing::trace!(
-            source = source_metadata.len(),
-            dest = dest_metadata.len(),
-            "measuring file sizes"
-        );
-        if source_metadata.len() != dest_metadata.len() {
-            tracing::trace!("lengths do not match; files differ");
-            return Ok(true);
-        }
-
-        let source_modified = source_metadata.modified()?;
-        let dest_modified = dest_metadata.modified()?;
-
-        tracing::trace!("checking modified time");
-        if source_modified > dest_modified {
-            tracing::trace!("source file was updated more recently");
-            return Ok(true);
-        }
-
-        tracing::trace!("destination file is up-to-date");
-        Ok(false)
-    }
-
-    /// manage a new file
-    #[instrument(skip(self, dest_constructor))]
-    pub fn manage(
-        &mut self,
-        from: PathBuf,
-        encrypt: bool,
-        dest_constructor: impl Fn(&PathBuf) -> Result<PathBuf>,
-        passphrase: &str,
-    ) -> Result<()> {
-        let to = dest_constructor(&from)?;
-
-        if encrypt {
-            let encryptor = Self::init_encryptor(passphrase.to_string());
-            self.copy_encrypted(encryptor, &from, &to)?;
-        } else {
-            self.copy_unencrypted(&from, &to)?;
-        }
-        self.add_file_to_metadata(from, to, encrypt)?;
-        Ok(())
-    }
-
-    /// add metadata about the newly added file to the conman store
-    #[instrument(skip(self))]
-    fn add_file_to_metadata(&mut self, from: PathBuf, to: PathBuf, encrypt: bool) -> Result<()> {
-        let new_metadata = FileData {
-            system_path: from,
-            repo_path: to,
-            encrypted: encrypt,
-        };
-        self.metadata.files.push(new_metadata);
-        Ok(())
+            .find(|file| file.repo_path.ends_with(path))
     }
 
     /// check whether the source path is already managed by conman
     #[instrument(skip(self))]
-    pub fn is_already_managed(&self, from: &PathBuf) -> bool {
-        for managed_file in self.metadata.files.iter() {
-            if managed_file.system_path.eq(from) {
+    pub fn file_is_already_managed(&self, system_path: &PathBuf) -> bool {
+        for managed_file in self.files.iter() {
+            if managed_file.system_path.eq(system_path) {
                 return true;
             }
         }
         return false;
     }
 
-    /// perform a simple copy of the file at source into the local conman git repo
+    /// manage the given `FileData`
+    pub fn manage_file(&mut self, file_data: FileData) {
+        self.files.push(file_data);
+    }
+
+    /// remove a managed file
     #[instrument(skip(self))]
-    fn copy_unencrypted(&self, from: &PathBuf, to: &PathBuf) -> Result<()> {
-        tracing::trace!("no encryption selected, performing simple file copy");
-        std::fs::copy(from, to)?;
-        tracing::trace!("copied file contents");
-        Ok(())
-    }
-
-    /// perform an encrypted copy of the file at source into the local conman git repo
-    #[instrument(skip(self, encryptor))]
-    fn copy_encrypted(&self, encryptor: Encryptor, from: &PathBuf, to: &PathBuf) -> Result<()> {
-        tracing::trace!("preparing file copy with encryption");
-
-        let mut reader = File::open(&from)?;
-        let mut file_contents: Vec<u8> = vec![];
-
-        // copy the file contents to the above buffer
-        std::io::copy(&mut reader, &mut file_contents)?;
-
-        // prepare the destination file
-        let mut destination_file = File::create(&to)?;
-
-        tracing::trace!("encrypting file contents");
-        // write encrypted file contents to the destination file
-        let mut writer = encryptor.wrap_output(&mut destination_file)?;
-        writer.write_all(&file_contents)?;
-        writer.finish()?;
-
-        tracing::trace!("copied and encrypted file contents");
-
-        Ok(())
-    }
-
-    /// persist file metadata to disk
-    #[instrument(skip(self))]
-    pub fn persist_metadata(&self, metadata_path: &PathBuf) -> Result<()> {
-        let metadata = toml::to_string(&self.metadata)?;
-
-        std::fs::write(metadata_path, metadata)?;
-        tracing::trace!(path=?metadata_path, "wrote metadata to disk");
-
-        Ok(())
-    }
-
-    /// helper to access metadata
-    pub fn metadata(&self) -> &Vec<FileData> {
-        &self.metadata.files
-    }
-
-    /// unmanage the file at the given path
-    #[instrument(skip(self))]
-    pub fn remove(&mut self, path: &PathBuf) -> Result<()> {
+    pub fn remove(&mut self, system_path: &PathBuf) -> Result<()> {
         let maybe_index = self
-            .metadata
             .files
             .iter()
-            .position(|managed_file| managed_file.system_path.eq(path));
+            .position(|file| file.system_path.eq(system_path));
 
         let Some(index) = maybe_index else {
             return Ok(());
@@ -367,25 +121,197 @@ impl FileManager {
 
         tracing::trace!(index = index, "found index of path to remove");
 
-        let removed_metadata = self.metadata.files.remove(index);
-        tracing::trace!(remaining = ?self.metadata.files, "removed file metadata");
+        let removed_metadata = self.files.remove(index);
 
         // remove the file from the local git repo
         std::fs::remove_file(&removed_metadata.repo_path)?;
         tracing::trace!("removed file from repo");
 
         tracing::trace!(removed=?removed_metadata, "removed managed file");
-
         Ok(())
     }
 
-    pub fn find_path(&self, file_name: &PathBuf) -> Option<&PathBuf> {
-        self.metadata
-            .files
-            .iter()
-            .find(|file| file.repo_path.ends_with(file_name.as_os_str()))
-            .map(|file| &file.system_path)
+    pub fn persist(&self) -> Result<()> {
+        let metadata = toml::to_string(self)?;
+
+        std::fs::write(&self.path, metadata)?;
+        tracing::trace!(path=?self.path, "wrote metadata to disk");
+
+        Ok(())
     }
+}
+
+/// read the current metadata and the cached metadata and compare the two returning
+/// a verdict to action upon
+#[instrument(skip(metadata_path, cache_path))]
+pub fn verify_cache(metadata_path: &PathBuf, cache_path: &PathBuf) -> Result<CacheVerdict> {
+    let cache = Metadata::read(cache_path)?;
+    let metadata = Metadata::read(metadata_path)?;
+
+    if cache.files.is_empty() && !metadata.files.is_empty() {
+        return Ok(CacheVerdict::FullPopulate(metadata));
+    }
+
+    if cache.files.is_empty() && metadata.files.is_empty() {
+        return Ok(CacheVerdict::DoNothing);
+    }
+
+    let dangling_files = dangling_cached_files(&metadata, &cache);
+
+    if dangling_files.is_empty() {
+        return Ok(CacheVerdict::DoNothing);
+    }
+
+    tracing::trace!("got {} dangling entries", dangling_files.len());
+
+    Ok(CacheVerdict::HandleDangling(dangling_files))
+}
+
+fn dangling_cached_files(metadata: &Metadata, cache: &Metadata) -> Vec<FileData> {
+    cache
+        .files
+        .iter()
+        .filter(|theirs| {
+            metadata
+                .files
+                .iter()
+                .find(|ours| ours.system_path.eq(&theirs.system_path))
+                .is_none()
+        })
+        .map(|theirs| theirs.clone())
+        .collect()
+}
+
+/// writes the given metadata to the specified cache path
+#[instrument(skip(metadata, cache_path))]
+pub fn write_cache(metadata: &Metadata, cache_path: &PathBuf) -> Result<()> {
+    let cache = toml::to_string(metadata)?;
+    tracing::trace!("serialized branch cache");
+
+    std::fs::write(cache_path, cache)?;
+    tracing::trace!("wrote cache to {}", cache_path.display());
+
+    Ok(())
+}
+
+/// performs a file content copy from a `FileData`'s `repo_path` to it's `system_path`
+#[instrument(skip(file_data, passphrase))]
+pub fn copy_from_repo(file_data: &FileData, passphrase: &str) -> Result<()> {
+    if file_data.encrypted {
+        copy_repo_encrypted(file_data, passphrase)?;
+    } else {
+        copy_any_unencrypted(&file_data.repo_path, &file_data.system_path)?;
+    }
+    Ok(())
+}
+
+/// performs a file content copy from a `FileData`'s encrypted `repo_path` to it's unencrypted `system_path`
+#[instrument(skip(file_data, passphrase))]
+pub fn copy_repo_encrypted(file_data: &FileData, passphrase: &str) -> Result<()> {
+    let passphrase = SecretString::from(passphrase.to_string());
+
+    let encrypted_file_contents = read_file_contents(&file_data.repo_path)?;
+
+    let decryptor = Decryptor::new(&encrypted_file_contents[..])?;
+
+    let mut decrypted_file_contents = vec![];
+    let mut reader =
+        decryptor.decrypt(std::iter::once(&age::scrypt::Identity::new(passphrase) as _))?;
+
+    reader.read_to_end(&mut decrypted_file_contents)?;
+
+    std::fs::write(&file_data.system_path, decrypted_file_contents)?;
+
+    Ok(())
+}
+
+/// read the file contents at the provided `path`
+#[instrument]
+fn read_file_contents(path: &PathBuf) -> Result<Vec<u8>> {
+    let mut reader = File::open(&path)?;
+    let mut file_contents: Vec<u8> = vec![];
+
+    std::io::copy(&mut reader, &mut file_contents)?;
+
+    tracing::trace!("read file contents");
+    Ok(file_contents)
+}
+
+/// set up the encryptor used for `age` file encryption
+fn init_encryptor(secret: &str) -> Encryptor {
+    let passphrase = SecretString::from(secret.to_string());
+    Encryptor::with_user_passphrase(passphrase)
+}
+
+/// performs a file content copy from a `FileData`'s `system_path` to it's `repo_path`
+#[instrument(skip(file_data, passphrase))]
+pub fn copy_from_system(file_data: &FileData, passphrase: &str) -> Result<()> {
+    if file_data.encrypted {
+        let encryptor = init_encryptor(passphrase);
+        copy_system_encrypted(encryptor, &file_data.system_path, &file_data.repo_path)?;
+    } else {
+        copy_any_unencrypted(&file_data.system_path, &file_data.repo_path)?;
+    }
+    Ok(())
+}
+
+/// perform a simple copy of the file at source into the local conman git repo
+#[instrument]
+fn copy_any_unencrypted(from: &PathBuf, to: &PathBuf) -> Result<()> {
+    tracing::trace!("no encryption selected, performing simple file copy");
+    std::fs::copy(from, to)?;
+    tracing::trace!("copied file contents");
+    Ok(())
+}
+
+/// perform an encrypted copy of the file at source into the local conman git repo
+#[instrument(skip(encryptor))]
+fn copy_system_encrypted(encryptor: Encryptor, from: &PathBuf, to: &PathBuf) -> Result<()> {
+    tracing::trace!("preparing file copy with encryption");
+
+    let file_contents = read_file_contents(&from)?;
+
+    // prepare the destination file
+    let mut destination_file = File::create(&to)?;
+
+    tracing::trace!("encrypting file contents");
+    // write encrypted file contents to the destination file
+    let mut writer = encryptor.wrap_output(&mut destination_file)?;
+    writer.write_all(&file_contents)?;
+    writer.finish()?;
+
+    tracing::trace!("copied and encrypted file contents");
+
+    Ok(())
+}
+
+/// Compares two files' metadata to check for differences
+#[instrument(skip(source, dest))]
+pub fn source_was_updated(source: &PathBuf, dest: &PathBuf) -> Result<bool> {
+    let source_metadata = std::fs::metadata(source)?;
+    let dest_metadata = std::fs::metadata(dest)?;
+
+    tracing::trace!(
+        source = source_metadata.len(),
+        dest = dest_metadata.len(),
+        "measuring file sizes"
+    );
+    if source_metadata.len() != dest_metadata.len() {
+        tracing::trace!("lengths do not match; files differ");
+        return Ok(true);
+    }
+
+    let source_modified = source_metadata.modified()?;
+    let dest_modified = dest_metadata.modified()?;
+
+    tracing::trace!("checking modified time");
+    if source_modified > dest_modified {
+        tracing::trace!("source file was updated more recently");
+        return Ok(true);
+    }
+
+    tracing::trace!("destination file is up-to-date");
+    Ok(false)
 }
 
 const USER_HOME_AMBIGUATION: &str = "__user_home__";

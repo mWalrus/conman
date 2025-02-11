@@ -64,7 +64,7 @@ fn main() {
         Command::Add { path, encrypt } => conman::add(&paths, &config, path, encrypt),
         Command::Remove { path } => conman::remove(&paths, path),
         Command::List => conman::list(&paths),
-        Command::Apply { no_confirm } => conman::apply(&paths, &repo, no_confirm),
+        Command::Apply { no_confirm } => conman::apply(&paths, &config, &repo, no_confirm),
         Command::Collect { path, no_confirm } => conman::collect(&paths, &config, path, no_confirm),
         Command::Branch { name, delete } => conman::branch(&mut config, &repo, &name, delete),
         Command::Init => unreachable!("we handled this above"),

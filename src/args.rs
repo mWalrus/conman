@@ -10,6 +10,13 @@ pub struct Args {
 
 // FIXME: additional commands
 //            - create-config (or something like that)
+//            - discard: undo unsaved changes
+//
+// FIXME: updates to existing commands:
+//            - add: allow multiple files
+//            - remove: allow multiple files
+//            - collect: allow specifying multiple files
+//            - branch: allow listing branches
 #[derive(Subcommand, Debug, PartialEq, Eq)]
 pub enum Command {
     #[command(about = "clones the repository from upstream (does nothing if already cloned)")]
