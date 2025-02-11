@@ -48,7 +48,7 @@ pub enum Command {
     #[command(about = "add a file to track")]
     Add {
         #[arg(help = "relative or absolute path to file")]
-        path: PathBuf,
+        files: Vec<PathBuf>,
         #[arg(
             short,
             long,

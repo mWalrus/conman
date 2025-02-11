@@ -223,25 +223,27 @@ pub fn collect(
 }
 
 #[instrument(skip(paths, config))]
-pub fn add(paths: &Paths, config: &Config, source: PathBuf, encrypt: bool) -> Result<()> {
-    let source_path = std::fs::canonicalize(source)?;
-
-    tracing::trace!(source=?source_path, "canonicalized source path");
-
+pub fn add(paths: &Paths, config: &Config, sources: Vec<PathBuf>, encrypt: bool) -> Result<()> {
     let mut metadata = Metadata::read(&paths.metadata)?;
 
-    if metadata.file_is_already_managed(&source_path) {
-        tracing::trace!("file is already managed, skipping");
-        return Ok(());
+    for source in sources.into_iter() {
+        let source_path = std::fs::canonicalize(source)?;
+
+        tracing::trace!(source=?source_path, "canonicalized source path");
+
+        if metadata.file_is_already_managed(&source_path) {
+            tracing::trace!("file is already managed, skipping");
+            return Ok(());
+        }
+
+        let destination_path = paths.repo_local_file_path(&source_path)?;
+
+        let file_data = FileData::new(source_path, destination_path, encrypt);
+
+        file::copy_from_system(&file_data, &config.encryption.passphrase)?;
+
+        metadata.manage_file(file_data);
     }
-
-    let destination_path = paths.repo_local_file_path(&source_path)?;
-
-    let file_data = FileData::new(source_path, destination_path, encrypt);
-
-    file::copy_from_system(&file_data, &config.encryption.passphrase)?;
-
-    metadata.manage_file(file_data);
 
     metadata.persist()?;
 
