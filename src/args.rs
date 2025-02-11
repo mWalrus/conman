@@ -74,6 +74,14 @@ pub enum Command {
         )]
         no_confirm: bool,
     },
+    Discard {
+        #[arg(
+            long,
+            help = "skip asking for confirmation before applying each file",
+            required = false
+        )]
+        no_confirm: bool,
+    },
     #[command(about = "collect any updates made to managed files on disk")]
     Collect {
         #[arg(help = "relative or absolute path to specific file")]

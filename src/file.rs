@@ -107,28 +107,22 @@ impl Metadata {
         self.files.push(file_data);
     }
 
-    /// remove a managed file
-    #[instrument(skip(self))]
-    pub fn remove(&mut self, system_path: &PathBuf) -> Result<()> {
+    /// only remove the file from the internal metadata storage without removing the actual file
+    /// from disk
+    #[instrument(skip(self, system_path))]
+    pub fn unmanage_file(&mut self, system_path: &PathBuf) -> Result<Option<FileData>> {
         let maybe_index = self
             .files
             .iter()
             .position(|file| file.system_path.eq(system_path));
 
         let Some(index) = maybe_index else {
-            return Ok(());
+            return Ok(None);
         };
 
         tracing::trace!(index = index, "found index of path to remove");
 
-        let removed_metadata = self.files.remove(index);
-
-        // remove the file from the local git repo
-        std::fs::remove_file(&removed_metadata.repo_path)?;
-        tracing::trace!("removed file from repo");
-
-        tracing::trace!(removed=?removed_metadata, "removed managed file");
-        Ok(())
+        Ok(Some(self.files.remove(index)))
     }
 
     pub fn persist(&self) -> Result<()> {
@@ -139,6 +133,23 @@ impl Metadata {
 
         Ok(())
     }
+}
+
+/// remove a managed file from the internal metadata storage and on disk
+#[instrument(skip(file_data))]
+pub fn remove_from_repo(file_data: &FileData) -> Result<()> {
+    // remove the file from the local git repo
+    match std::fs::remove_file(&file_data.repo_path) {
+        Ok(()) => {
+            tracing::trace!("removed file from repo");
+        }
+        Err(e) => {
+            tracing::warn!("failed to remove repo file: {e}");
+        }
+    }
+
+    tracing::trace!(removed=?file_data.repo_path, "removed managed file");
+    Ok(())
 }
 
 /// read the current metadata and the cached metadata and compare the two returning

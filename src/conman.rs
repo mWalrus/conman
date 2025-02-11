@@ -7,8 +7,8 @@ use tracing::instrument;
 
 use crate::{
     config::Config,
-    file::{self, CacheVerdict, FileData, Metadata},
-    git::{Repo, StatusUpdate},
+    file::{self, write_cache, CacheVerdict, FileData, Metadata},
+    git::{Repo, StatusType, StatusUpdate},
     paths::Paths,
 };
 
@@ -278,9 +278,15 @@ pub fn list(paths: &Paths) -> Result<()> {
 }
 
 #[instrument(skip(paths))]
-pub fn remove(paths: &Paths, path: PathBuf) -> Result<()> {
+pub fn remove(paths: &Paths, system_path: PathBuf) -> Result<()> {
     let mut metadata = Metadata::read(&paths.metadata)?;
-    metadata.remove(&path)?;
+
+    let Some(file_data) = metadata.unmanage_file(&system_path)? else {
+        return Ok(());
+    };
+
+    file::remove_from_repo(&file_data)?;
+
     metadata.persist()?;
     Ok(())
 }
@@ -315,6 +321,89 @@ pub fn apply(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) -> R
         }
 
         file::copy_from_repo(file_data, &config.encryption.passphrase)?;
+    }
+
+    Ok(())
+}
+
+#[instrument(skip(paths, config, repo))]
+pub fn discard(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) -> Result<()> {
+    let mut metadata = Metadata::read(&paths.metadata)?;
+
+    let status_changes = match repo.status_changes() {
+        Ok(Some(status_changes)) => status_changes,
+        Ok(None) => {
+            tracing::trace!("no status change found");
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(e)?;
+        }
+    };
+
+    let mut confirmed_changes_to_reset = vec![];
+
+    for change in status_changes.into_iter() {
+        let repo_path = change.path().unwrap();
+
+        let Some(file_data) = metadata.get_file_data_where_repo_path_ends_with(&repo_path) else {
+            continue;
+        };
+
+        let change_string = match change.status {
+            StatusType::New => "new file",
+            _ => "changes made to file",
+        };
+
+        let prompt = format!(
+            "Do you want to discard {} '{}'",
+            change_string,
+            file_data.system_path.display()
+        );
+
+        let confirmation = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .interact()?;
+
+        if !confirmation {
+            continue;
+        }
+
+        confirmed_changes_to_reset.push(change);
+    }
+
+    repo.reset(&confirmed_changes_to_reset)?;
+
+    let mut should_persist_metadata = false;
+
+    for change in confirmed_changes_to_reset.iter() {
+        let path = change.path().unwrap();
+
+        let Some(file_data) = metadata.get_file_data_where_repo_path_ends_with(path) else {
+            continue;
+        };
+
+        match change.status {
+            StatusType::New => {
+                // EXPLANATION: We have to clone because borrow checker
+                let system_path = file_data.system_path.clone();
+                metadata.unmanage_file(&system_path)?;
+                should_persist_metadata = true;
+            }
+            StatusType::Modified => {
+                file::copy_from_repo(file_data, &config.encryption.passphrase)?;
+            }
+            StatusType::Deleted => {
+                metadata.manage_file(file_data.clone());
+                should_persist_metadata = true;
+            }
+            _ => {}
+        }
+    }
+
+    if should_persist_metadata {
+        metadata.persist()?;
+        write_cache(&metadata, &paths.metadata_cache)?;
     }
 
     Ok(())

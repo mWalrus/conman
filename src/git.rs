@@ -26,7 +26,13 @@ pub struct StatusUpdate {
     pub new: Option<PathBuf>,
 }
 
-#[derive(Debug)]
+impl StatusUpdate {
+    pub fn path(&self) -> Option<&PathBuf> {
+        self.old.as_ref().or(self.new.as_ref())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum StatusType {
     New,
     Modified,
@@ -600,6 +606,22 @@ impl Repo {
         remote.push(&[refspec], Some(&mut push_options))?;
         tracing::trace!("pushed local changes to origin/{branch_name}",);
 
+        Ok(())
+    }
+
+    #[instrument(skip(self, changes_to_reset))]
+    pub fn reset(&self, changes_to_reset: &Vec<StatusUpdate>) -> Result<()> {
+        let mut checkout_opts = CheckoutBuilder::new();
+
+        checkout_opts.force();
+        checkout_opts.remove_untracked(true);
+
+        for change in changes_to_reset.iter() {
+            let path = change.old.as_ref().or(change.new.as_ref()).unwrap();
+            checkout_opts.path(path);
+        }
+
+        self.inner.checkout_head(Some(&mut checkout_opts))?;
         Ok(())
     }
 }
