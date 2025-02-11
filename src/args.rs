@@ -12,7 +12,6 @@ pub struct Args {
 //            - create-config (or something like that)
 //
 // FIXME: updates to existing commands:
-//            - add: allow multiple files
 //            - remove: allow multiple files
 //            - collect: allow specifying multiple files
 //            - branch: allow listing branches
