@@ -10,7 +10,6 @@ pub struct Args {
 
 // FIXME: additional commands
 //            - create-config (or something like that)
-//            - discard: undo unsaved changes
 //
 // FIXME: updates to existing commands:
 //            - add: allow multiple files
