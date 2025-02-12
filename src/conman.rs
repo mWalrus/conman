@@ -345,11 +345,17 @@ pub fn apply(
     Ok(())
 }
 
-#[instrument(skip(paths, config, repo))]
-pub fn discard(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) -> Result<()> {
+#[instrument(skip(paths, config, repo, files))]
+pub fn discard(
+    paths: &Paths,
+    config: &Config,
+    repo: &Repo,
+    files: Option<Vec<PathBuf>>,
+    no_confirm: bool,
+) -> Result<()> {
     let mut metadata = Metadata::read(&paths.metadata)?;
 
-    let status_changes = match repo.status_changes() {
+    let mut status_changes = match repo.status_changes() {
         Ok(Some(status_changes)) => status_changes,
         Ok(None) => {
             tracing::trace!("no status change found");
@@ -359,6 +365,17 @@ pub fn discard(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) ->
             return Err(e)?;
         }
     };
+
+    if let Some(files) = files {
+        status_changes.retain(|change| {
+            let Some(file_data) =
+                metadata.get_file_data_where_repo_path_ends_with(&change.relative_path)
+            else {
+                return false;
+            };
+            files.contains(&file_data.system_path)
+        });
+    }
 
     let mut confirmed_changes_to_reset = vec![];
 

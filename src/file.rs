@@ -41,7 +41,7 @@ impl FileData {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Default)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Metadata {
     #[serde(skip)]
     path: PathBuf,
