@@ -296,13 +296,25 @@ pub fn remove(paths: &Paths, files: Vec<PathBuf>) -> Result<()> {
 }
 
 #[instrument(skip(paths, config, repo))]
-pub fn apply(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) -> Result<()> {
+pub fn apply(
+    paths: &Paths,
+    config: &Config,
+    repo: &Repo,
+    files: Option<Vec<PathBuf>>,
+    no_confirm: bool,
+) -> Result<()> {
     if repo.check_has_unsaved()? {
         print_unsaved_changes_warning();
         return Ok(());
     }
 
-    let metadata = Metadata::read(&paths.metadata)?;
+    let mut metadata = Metadata::read(&paths.metadata)?;
+
+    if let Some(files) = files {
+        metadata
+            .files
+            .retain(|file| files.contains(&file.system_path));
+    }
 
     for file_data in metadata.files.iter() {
         tracing::trace!(entry=?file_data.system_path ,"handling file");

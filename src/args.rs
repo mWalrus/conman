@@ -45,7 +45,7 @@ pub enum Command {
     Pull,
     #[command(about = "add a file to track")]
     Add {
-        #[arg(help = "relative or absolute path to file")]
+        #[arg(help = "relative or absolute path to file(s)")]
         files: Vec<PathBuf>,
         #[arg(
             short,
@@ -59,11 +59,13 @@ pub enum Command {
     List,
     #[command(about = "remove a managed file")]
     Remove {
-        #[arg(help = "relative or absolute path to file")]
+        #[arg(help = "relative or absolute path to file(s)")]
         files: Vec<PathBuf>,
     },
     #[command(about = "apply managed configuration")]
     Apply {
+        #[arg(help = "specific file(s) to apply")]
+        files: Option<Vec<PathBuf>>,
         #[arg(
             long,
             help = "skip asking for confirmation before applying each file",
