@@ -50,14 +50,11 @@ pub fn default_branch() -> String {
 
 impl Config {
     #[instrument]
-    pub fn read() -> Result<Option<Self>> {
+    pub fn read() -> Result<Self> {
         let config = Self::config_dir()?;
         let config_file = Self::config_file(&config);
 
-        let mut config_file = match File::open(&config_file) {
-            Ok(file) => file,
-            Err(_) => return Ok(None),
-        };
+        let mut config_file = File::open(&config_file)?;
 
         let mut contents = String::new();
         config_file.read_to_string(&mut contents)?;
@@ -65,7 +62,7 @@ impl Config {
         let config: Config = toml::de::from_str(&contents)?;
 
         tracing::trace!("read config");
-        Ok(Some(config))
+        Ok(config)
     }
 
     #[instrument(skip(self))]

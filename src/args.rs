@@ -11,17 +11,12 @@ pub struct Args {
 // FIXME: additional commands
 //            - create-config (or something like that)
 //
-// FIXME: updates to existing commands:
-//            - branch: allow listing branches
 #[derive(Subcommand, Debug, PartialEq, Eq)]
 pub enum Command {
     #[command(about = "clones the repository from upstream (does nothing if already cloned)")]
     Init,
     #[command(about = "view the current upstream..local diff")]
-    Diff {
-        #[arg(short, long)]
-        no_color: bool,
-    },
+    Diff,
     #[command(about = "view the status of the local copy of your config")]
     Status,
     #[command(about = "edit a tracked file")]
@@ -95,25 +90,19 @@ pub enum Command {
     },
     #[command(about = "manage branches in conman")]
     Branch {
-        #[arg(
-            long,
-            short,
-            help = "name of branch to checkout",
-            value_name = "BRANCH",
-            required = false,
-            exclusive = true
-        )]
-        checkout: Option<String>,
-        #[arg(long, short, help = "list all current branches", exclusive = true)]
-        list: bool,
-        #[arg(
-            long,
-            short,
-            help = "delete specified branch",
-            value_name = "BRANCH",
-            required = false,
-            exclusive = true
-        )]
-        delete: Option<String>,
+        #[command(subcommand)]
+        branch_op: BranchCommand,
     },
+}
+
+#[derive(Subcommand, Debug, PartialEq, Eq)]
+pub enum BranchCommand {
+    #[command(about = "checkout a branch")]
+    Checkout { branch: String },
+    #[command(about = "list all available branches")]
+    List,
+    #[command(about = "delete a branch")]
+    Delete { branch: String },
+    #[command(about = "show the current branch")]
+    Current,
 }
