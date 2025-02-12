@@ -309,7 +309,7 @@ pub fn apply(
     paths: &Paths,
     config: &Config,
     repo: &Repo,
-    files: Option<Vec<PathBuf>>,
+    maybe_files: Option<Vec<PathBuf>>,
     no_confirm: bool,
 ) -> Result<()> {
     if repo.check_has_unsaved()? {
@@ -319,9 +319,9 @@ pub fn apply(
 
     let mut metadata = Metadata::read(&paths.metadata)?;
 
-    let files = file::canonicalize_optional_paths(files);
+    let maybe_files = file::canonicalize_optional_paths(maybe_files);
 
-    if let Some(files) = files {
+    if let Some(files) = maybe_files {
         metadata
             .files
             .retain(|file| files.contains(&file.system_path));
