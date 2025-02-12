@@ -95,9 +95,25 @@ pub enum Command {
     },
     #[command(about = "manage branches in conman")]
     Branch {
-        #[arg(help = "name of branch to checkout")]
-        name: String,
-        #[arg(required = false, long, help = "delete specified branch")]
-        delete: bool,
+        #[arg(
+            long,
+            short,
+            help = "name of branch to checkout",
+            value_name = "BRANCH",
+            required = false,
+            exclusive = true
+        )]
+        checkout: Option<String>,
+        #[arg(long, short, help = "list all current branches", exclusive = true)]
+        list: bool,
+        #[arg(
+            long,
+            short,
+            help = "delete specified branch",
+            value_name = "BRANCH",
+            required = false,
+            exclusive = true
+        )]
+        delete: Option<String>,
     },
 }

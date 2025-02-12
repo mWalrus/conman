@@ -4,9 +4,9 @@ use anyhow::Result;
 use colored::{ColoredString, Colorize};
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
-    AnnotatedCommit, AutotagOption, Cred, CredentialType, Error, FetchOptions, MergeAnalysis,
-    PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status, StatusEntry,
-    StatusOptions, Statuses,
+    AnnotatedCommit, AutotagOption, BranchType, Cred, CredentialType, Error, FetchOptions,
+    MergeAnalysis, PushOptions, Reference, Remote, RemoteCallbacks, Repository, Status,
+    StatusEntry, StatusOptions, Statuses,
 };
 use tracing::instrument;
 
@@ -83,9 +83,7 @@ impl Repo {
 
     #[instrument(skip(self))]
     pub fn delete_branch(&self, branch_name: &str) -> Result<()> {
-        let mut branch = self
-            .inner
-            .find_branch(branch_name, git2::BranchType::Local)?;
+        let mut branch = self.inner.find_branch(branch_name, BranchType::Local)?;
 
         branch.delete()?;
         tracing::trace!("deleted branch");
@@ -95,9 +93,7 @@ impl Repo {
 
     #[instrument(skip(self))]
     pub fn set_upstream(&self, branch_name: &str) -> Result<()> {
-        let mut branch = self
-            .inner
-            .find_branch(branch_name, git2::BranchType::Local)?;
+        let mut branch = self.inner.find_branch(branch_name, BranchType::Local)?;
 
         if let Err(_) = branch.upstream() {
             branch.set_upstream(Some(branch_name))?;
@@ -616,5 +612,18 @@ impl Repo {
 
         self.inner.checkout_head(Some(&mut checkout_opts))?;
         Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub fn local_branch_names(&self) -> Result<Vec<String>> {
+        let branches = self.inner.branches(Some(BranchType::Local))?;
+
+        let branch_names: Vec<_> = branches
+            .flatten()
+            .map(|branch| branch.0)
+            .filter_map(|branch| branch.name().ok()?.map(|name| name.to_string()))
+            .collect();
+
+        Ok(branch_names)
     }
 }

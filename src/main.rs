@@ -73,7 +73,27 @@ fn main() {
         Command::Collect { files, no_confirm } => {
             conman::collect(&paths, &config, files, no_confirm)
         }
-        Command::Branch { name, delete } => conman::branch(&mut config, &repo, &name, delete),
+        Command::Branch {
+            checkout,
+            list,
+            delete,
+        } => {
+            let mut result: anyhow::Result<(), anyhow::Error> = Ok(());
+
+            if let Some(branch) = checkout {
+                result = conman::checkout_branch(&mut config, &repo, branch);
+            }
+
+            if list {
+                result = conman::list_branches(&repo);
+            }
+
+            if let Some(branch) = delete {
+                result = conman::delete_branch(&repo, branch);
+            }
+
+            result
+        }
         Command::Init => unreachable!("we handled this above"),
     };
 
