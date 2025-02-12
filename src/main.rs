@@ -70,7 +70,9 @@ fn main() {
         Command::Discard { files, no_confirm } => {
             conman::discard(&paths, &config, &repo, files, no_confirm)
         }
-        Command::Collect { path, no_confirm } => conman::collect(&paths, &config, path, no_confirm),
+        Command::Collect { files, no_confirm } => {
+            conman::collect(&paths, &config, files, no_confirm)
+        }
         Command::Branch { name, delete } => conman::branch(&mut config, &repo, &name, delete),
         Command::Init => unreachable!("we handled this above"),
     };
