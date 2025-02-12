@@ -409,7 +409,9 @@ pub fn discard(
         confirmed_changes_to_reset.push(change);
     }
 
-    repo.reset(&confirmed_changes_to_reset)?;
+    if !confirmed_changes_to_reset.is_empty() {
+        repo.reset(&confirmed_changes_to_reset)?;
+    }
 
     let mut should_persist_metadata = false;
 
