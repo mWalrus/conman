@@ -229,6 +229,8 @@ pub fn collect(
 pub fn add(paths: &Paths, config: &Config, sources: Vec<PathBuf>, encrypt: bool) -> Result<()> {
     let mut metadata = Metadata::read(&paths.metadata)?;
 
+    let sources = file::canonicalize_paths(sources);
+
     for source in sources.into_iter() {
         let source_path = std::fs::canonicalize(source)?;
 
@@ -286,6 +288,8 @@ pub fn list(paths: &Paths) -> Result<()> {
 pub fn remove(paths: &Paths, files: Vec<PathBuf>) -> Result<()> {
     let mut metadata = Metadata::read(&paths.metadata)?;
 
+    let files = file::canonicalize_paths(files);
+
     for file in files {
         let Some(file_data) = metadata.unmanage_file(&file)? else {
             return Ok(());
@@ -312,6 +316,8 @@ pub fn apply(
     }
 
     let mut metadata = Metadata::read(&paths.metadata)?;
+
+    let files = file::canonicalize_optional_paths(files);
 
     if let Some(files) = files {
         metadata
@@ -365,6 +371,8 @@ pub fn discard(
             return Err(e)?;
         }
     };
+
+    let files = file::canonicalize_optional_paths(files);
 
     if let Some(files) = files {
         status_changes.retain(|change| {

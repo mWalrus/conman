@@ -325,6 +325,17 @@ pub fn source_was_updated(source: &PathBuf, dest: &PathBuf) -> Result<bool> {
     Ok(false)
 }
 
+pub fn canonicalize_paths(files: Vec<PathBuf>) -> Vec<PathBuf> {
+    files
+        .into_iter()
+        .map(|path| std::fs::canonicalize(path).unwrap())
+        .collect()
+}
+
+pub fn canonicalize_optional_paths(maybe_files: Option<Vec<PathBuf>>) -> Option<Vec<PathBuf>> {
+    maybe_files.map(|files| canonicalize_paths(files))
+}
+
 const USER_HOME_AMBIGUATION: &str = "__user_home__";
 
 #[instrument(skip(de))]
