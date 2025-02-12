@@ -12,7 +12,6 @@ pub struct Args {
 //            - create-config (or something like that)
 //
 // FIXME: updates to existing commands:
-//            - collect: allow specifying multiple files
 //            - branch: allow listing branches
 #[derive(Subcommand, Debug, PartialEq, Eq)]
 pub enum Command {
