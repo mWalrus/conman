@@ -56,7 +56,7 @@ fn main() {
 
     let result = match args.command {
         Command::Diff { no_color } => conman::diff(&repo, no_color),
-        Command::Status => conman::status(&repo),
+        Command::Status => conman::status(&paths, &repo),
         Command::Edit { path, skip_update } => conman::edit(&paths, &config, path, skip_update),
         Command::Save => conman::save(&paths, &repo),
         Command::Push => conman::push(&config, &repo, &config.upstream.branch),

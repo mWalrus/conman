@@ -8,7 +8,7 @@ use tracing::instrument;
 use crate::{
     config::Config,
     file::{self, write_cache, CacheVerdict, FileData, Metadata},
-    git::{Repo, StatusType, StatusUpdate},
+    git::{Repo, StatusChange, StatusType},
     paths::Paths,
 };
 
@@ -23,8 +23,8 @@ pub fn diff(_repo: &Repo, _no_color: bool) -> Result<()> {
     Ok(())
 }
 
-#[instrument(skip(repo))]
-pub fn status(repo: &Repo) -> Result<()> {
+#[instrument(skip(paths, repo))]
+pub fn status(paths: &Paths, repo: &Repo) -> Result<()> {
     let status_changes = match repo.status_changes() {
         Ok(Some(status_changes)) => status_changes,
         Ok(None) => {
@@ -36,32 +36,33 @@ pub fn status(repo: &Repo) -> Result<()> {
         }
     };
 
-    print_status_updates(status_changes);
+    let metadata = Metadata::read(&paths.metadata)?;
+
+    let formatted_changes: Vec<_> = status_changes
+        .into_iter()
+        .map(|change| {
+            (
+                change.status,
+                metadata.get_file_data_where_repo_path_ends_with(&change.relative_path),
+            )
+        })
+        .filter(|(_, fd)| fd.is_some())
+        .collect();
+
+    print_status_changes(formatted_changes);
 
     Ok(())
 }
 
-fn print_status_updates(updates: Vec<StatusUpdate>) {
+fn print_status_changes(changed_files: Vec<(StatusType, Option<&FileData>)>) {
     println!("{}", "Unsaved changes:".bold());
 
-    for update in updates.iter() {
-        match (update.old.as_ref(), update.new.as_ref()) {
-            (Some(old), Some(new)) if old != new => {
-                println!(
-                    "{}: {} -> {}",
-                    update.status.into_colored_string(),
-                    old.display(),
-                    new.display()
-                );
-            }
-            (old, new) => {
-                println!(
-                    "{}: {}",
-                    update.status.into_colored_string(),
-                    old.or(new).unwrap().display()
-                )
-            }
-        }
+    for (status_type, file_data) in changed_files.iter() {
+        println!(
+            "{}: {}",
+            status_type.into_colored_string(),
+            file_data.unwrap().system_path.display()
+        )
     }
 }
 
@@ -95,19 +96,21 @@ pub fn save(paths: &Paths, repo: &Repo) -> Result<()> {
 }
 
 #[instrument(skip(metadata, status_changes))]
-fn construct_commit_message(metadata: &Metadata, status_changes: Vec<StatusUpdate>) -> String {
+fn construct_commit_message(metadata: &Metadata, status_changes: Vec<StatusChange>) -> String {
     let mut commit_message = "system-update: updating files\n\n".to_string();
     let change_count = status_changes.len();
 
-    for (i, entry) in status_changes.into_iter().enumerate() {
-        let file_path = entry.old.or(entry.new).unwrap();
-        let Some(file_data) = metadata.get_file_data_where_repo_path_ends_with(&file_path) else {
+    for (i, change) in status_changes.into_iter().enumerate() {
+        let maybe_file_data =
+            metadata.get_file_data_where_repo_path_ends_with(&change.relative_path);
+
+        let Some(file_data) = maybe_file_data else {
             continue;
         };
 
         let update = format!(
             "{}: {}{}",
-            entry.status.to_str(),
+            change.status.to_str(),
             file_data.system_path.display(),
             if i + 1 == change_count { "" } else { "\n" }
         );
@@ -360,9 +363,10 @@ pub fn discard(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) ->
     let mut confirmed_changes_to_reset = vec![];
 
     for change in status_changes.into_iter() {
-        let repo_path = change.path().unwrap();
+        let maybe_file_data =
+            metadata.get_file_data_where_repo_path_ends_with(&change.relative_path);
 
-        let Some(file_data) = metadata.get_file_data_where_repo_path_ends_with(&repo_path) else {
+        let Some(file_data) = maybe_file_data else {
             continue;
         };
 
@@ -393,9 +397,10 @@ pub fn discard(paths: &Paths, config: &Config, repo: &Repo, no_confirm: bool) ->
     let mut should_persist_metadata = false;
 
     for change in confirmed_changes_to_reset.iter() {
-        let path = change.path().unwrap();
+        let maybe_file_data =
+            metadata.get_file_data_where_repo_path_ends_with(&change.relative_path);
 
-        let Some(file_data) = metadata.get_file_data_where_repo_path_ends_with(path) else {
+        let Some(file_data) = maybe_file_data else {
             continue;
         };
 

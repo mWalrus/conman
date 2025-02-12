@@ -20,16 +20,9 @@ pub struct Repo {
 }
 
 #[derive(Debug)]
-pub struct StatusUpdate {
+pub struct StatusChange {
     pub status: StatusType,
-    pub old: Option<PathBuf>,
-    pub new: Option<PathBuf>,
-}
-
-impl StatusUpdate {
-    pub fn path(&self) -> Option<&PathBuf> {
-        self.old.as_ref().or(self.new.as_ref())
-    }
+    pub relative_path: PathBuf,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -487,7 +480,7 @@ impl Repo {
     }
 
     #[instrument(skip(self))]
-    pub fn status_changes(&self) -> Result<Option<Vec<StatusUpdate>>> {
+    pub fn status_changes(&self) -> Result<Option<Vec<StatusChange>>> {
         let status_entries = self.status_entries()?;
 
         let status_changes: Vec<_> = status_entries
@@ -508,9 +501,9 @@ impl Repo {
             return Ok(None);
         }
 
-        let formatted_updates = self.prepare_status_updates(status_changes)?;
+        let formatted_changes = self.prepare_status_changes(status_changes)?;
 
-        Ok(Some(formatted_updates))
+        Ok(Some(formatted_changes))
     }
 
     #[instrument(skip(self))]
@@ -525,8 +518,8 @@ impl Repo {
     }
 
     #[instrument(skip(self, entries))]
-    fn prepare_status_updates(&self, entries: Vec<StatusEntry<'_>>) -> Result<Vec<StatusUpdate>> {
-        let mut status_updates = Vec::with_capacity(entries.len());
+    fn prepare_status_changes(&self, entries: Vec<StatusEntry<'_>>) -> Result<Vec<StatusChange>> {
+        let mut status_changes = Vec::with_capacity(entries.len());
 
         for status_entry in entries.iter() {
             let workdir_tree_status = match status_entry.status() {
@@ -558,13 +551,14 @@ impl Repo {
             let old_path = diff.old_file().path().map(|path| path.to_path_buf());
             let new_path = diff.new_file().path().map(|path| path.to_path_buf());
 
-            status_updates.push(StatusUpdate {
+            let relative_path = old_path.or(new_path).unwrap();
+
+            status_changes.push(StatusChange {
                 status: workdir_tree_status,
-                old: old_path,
-                new: new_path,
+                relative_path,
             });
         }
-        Ok(status_updates)
+        Ok(status_changes)
     }
 
     #[instrument(skip(self))]
@@ -610,15 +604,14 @@ impl Repo {
     }
 
     #[instrument(skip(self, changes_to_reset))]
-    pub fn reset(&self, changes_to_reset: &Vec<StatusUpdate>) -> Result<()> {
+    pub fn reset(&self, changes_to_reset: &Vec<StatusChange>) -> Result<()> {
         let mut checkout_opts = CheckoutBuilder::new();
 
         checkout_opts.force();
         checkout_opts.remove_untracked(true);
 
         for change in changes_to_reset.iter() {
-            let path = change.old.as_ref().or(change.new.as_ref()).unwrap();
-            checkout_opts.path(path);
+            checkout_opts.path(&change.relative_path);
         }
 
         self.inner.checkout_head(Some(&mut checkout_opts))?;

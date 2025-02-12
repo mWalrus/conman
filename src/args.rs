@@ -74,6 +74,8 @@ pub enum Command {
         no_confirm: bool,
     },
     Discard {
+        // #[arg(help = "specific file(s) to discard")]
+        // files: Option<Vec<PathBuf>>,
         #[arg(
             long,
             help = "skip asking for confirmation before applying each file",
