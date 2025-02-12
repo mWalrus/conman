@@ -189,15 +189,17 @@ pub fn edit(
 pub fn collect(
     paths: &Paths,
     config: &Config,
-    maybe_specified_path: Option<PathBuf>,
+    maybe_files: Option<Vec<PathBuf>>,
     no_confirm: bool,
 ) -> Result<()> {
     let mut metadata = Metadata::read(&paths.metadata)?;
 
-    if let Some(specified_path) = maybe_specified_path {
+    let maybe_files = file::canonicalize_optional_paths(maybe_files);
+
+    if let Some(files) = maybe_files {
         metadata
             .files
-            .retain(|file| file.system_path.eq(&specified_path));
+            .retain(|file| files.contains(&file.system_path));
     }
 
     for file in metadata.files.iter() {

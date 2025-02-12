@@ -85,8 +85,8 @@ pub enum Command {
     },
     #[command(about = "collect any updates made to managed files on disk")]
     Collect {
-        #[arg(help = "relative or absolute path to specific file")]
-        path: Option<PathBuf>,
+        #[arg(help = "specific file(s) to collect")]
+        files: Option<Vec<PathBuf>>,
         #[arg(
             long,
             help = "skip asking for confirmation before collecting each file",
