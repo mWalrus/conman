@@ -1,3 +1,5 @@
+use std::thread::JoinHandle;
+
 use add::AddOp;
 use anyhow::Result;
 use apply::ApplyOp;
@@ -115,20 +117,18 @@ impl Operation {
     }
 
     /// execute the operation in a separate thread
-    pub fn execute(self) {
-        rayon_core::spawn(move || {
-            self.inner
-                .run(
-                    self.config,
-                    self.paths,
-                    Box::new(move |msg| Self::report(self.tx.clone(), msg)),
-                )
-                .unwrap();
-        });
+    pub fn execute(self) -> JoinHandle<Result<()>> {
+        std::thread::spawn(move || {
+            self.inner.run(
+                self.config,
+                self.paths,
+                Box::new(move |msg| Self::report(self.tx.clone(), msg)),
+            )
+        })
     }
 
     /// execute the operation, blocking the main thread
-    pub fn execute_blocking(self) {
-        self.inner.run_silent(self.config, self.paths).unwrap();
+    pub fn execute_blocking(self) -> Result<()> {
+        self.inner.run_silent(self.config, self.paths)
     }
 }

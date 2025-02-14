@@ -16,7 +16,10 @@ fn main() {
 
     paths::create_dirs().unwrap();
 
-    Operation::verify_cache().unwrap().execute_blocking();
+    if let Err(err) = Operation::verify_cache().unwrap().execute_blocking() {
+        eprintln!("ERROR: {err:?}");
+        return;
+    }
 
     tracing::trace!(command = ?args.command, "running command");
 
@@ -24,9 +27,13 @@ fn main() {
 
     let receiver = operation.subscribe();
 
-    operation.execute();
+    let task_handle = operation.execute();
 
     while let Ok(message) = receiver.recv() {
         println!("message: {message}");
+    }
+
+    if let Ok(Err(err)) = task_handle.join() {
+        eprintln!("ERROR: {err:?}");
     }
 }
