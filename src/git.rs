@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use colored::{ColoredString, Colorize};
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
@@ -60,7 +60,8 @@ impl Repo {
     #[instrument(skip(paths))]
     pub fn open(paths: &Paths) -> Result<Self> {
         tracing::trace!(path=?paths.repo, "attempting to open repo");
-        let repo = Repository::open(&paths.repo)?;
+        let repo = Repository::open(&paths.repo)
+            .map_err(|_| anyhow!("repo not found. Use `conman init` to clone it"))?;
         tracing::trace!(path=?paths.repo, "opened repo");
 
         Ok(Self { inner: repo })
