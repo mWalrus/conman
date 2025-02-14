@@ -11,6 +11,7 @@ use tracing::instrument;
 
 use crate::{
     config::Config,
+    file::FileData,
     paths::{Paths, METADATA_FILE_NAME},
 };
 
@@ -590,13 +591,13 @@ impl Repo {
     }
 
     #[instrument(skip(self, changes_to_reset))]
-    pub fn reset(&self, changes_to_reset: &Vec<StatusChange>) -> Result<()> {
+    pub fn reset(&self, changes_to_reset: &Vec<(StatusChange, FileData)>) -> Result<()> {
         let mut checkout_opts = CheckoutBuilder::new();
 
         checkout_opts.force();
         checkout_opts.remove_untracked(true);
 
-        for change in changes_to_reset.iter() {
+        for (change, _) in changes_to_reset.iter() {
             checkout_opts.path(&change.relative_path);
         }
 

@@ -55,72 +55,50 @@ impl Runnable for DiscardOp {
             });
         }
 
-        let mut confirmed_changes_to_reset = vec![];
+        let files_to_reset: Vec<_> = status_changes
+            .into_iter()
+            .map(|change| {
+                metadata
+                    .get_file_data_where_repo_path_ends_with(&change.relative_path)
+                    .map(|file| (change, file.clone()))
+            })
+            .flatten()
+            .filter(|(_, file)| {
+                if self.no_confirm {
+                    return true;
+                }
 
-        for change in status_changes.into_iter() {
-            let maybe_file_data =
-                metadata.get_file_data_where_repo_path_ends_with(&change.relative_path);
-
-            let Some(file_data) = maybe_file_data else {
-                continue;
-            };
-
-            let change_string = match change.status {
-                StatusType::New => "new file",
-                _ => "changes made to file",
-            };
-
-            if !self.no_confirm {
-                let prompt = format!(
-                    "Do you want to discard {} '{}'",
-                    change_string,
-                    file_data.system_path.display()
-                );
+                let prompt = format!("do you want to discard '{}'", file.system_path.display());
 
                 let confirmation = Confirm::with_theme(&ColorfulTheme::default())
                     .with_prompt(prompt)
-                    .interact()?;
+                    .interact()
+                    .unwrap();
 
-                if !confirmation {
-                    continue;
-                }
-            }
+                confirmation
+            })
+            .collect();
 
-            confirmed_changes_to_reset.push(change);
-        }
-
-        if !confirmed_changes_to_reset.is_empty() {
-            repo.reset(&confirmed_changes_to_reset)?;
+        if !files_to_reset.is_empty() {
+            repo.reset(&files_to_reset)?;
         }
 
         let mut should_persist_metadata = false;
 
-        for change in confirmed_changes_to_reset.iter() {
-            let maybe_file_data =
-                metadata.get_file_data_where_repo_path_ends_with(&change.relative_path);
-
-            let Some(file_data) = maybe_file_data else {
-                continue;
-            };
-
-            report!(
-                sender,
-                "discarding file '{}'",
-                file_data.system_path.display()
-            );
+        for (change, file) in files_to_reset.into_iter() {
+            report!(sender, "discarding file '{}'", file.system_path.display());
 
             match change.status {
                 StatusType::New => {
                     // EXPLANATION: We have to clone because borrow checker
-                    let system_path = file_data.system_path.clone();
-                    metadata.unmanage_file(&system_path)?;
+                    metadata.unmanage_file(&file.system_path)?;
                     should_persist_metadata = true;
                 }
                 StatusType::Modified => {
-                    file::copy_from_repo(file_data, &config.encryption.passphrase)?;
+                    file::copy_from_repo(&file, &config.encryption.passphrase)?;
                 }
                 StatusType::Deleted => {
-                    metadata.manage_file(file_data.clone());
+                    metadata.manage_file(file);
                     should_persist_metadata = true;
                 }
                 _ => {}
