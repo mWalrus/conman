@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
+use crossbeam_channel::Sender;
 use dialoguer::{theme::ColorfulTheme, Confirm};
 
 use crate::{
@@ -8,6 +9,7 @@ use crate::{
     file::{self, Metadata},
     git::Repo,
     paths::Paths,
+    report,
 };
 
 use super::Runnable;
@@ -18,11 +20,16 @@ pub struct ApplyOp {
 }
 
 impl Runnable for ApplyOp {
-    fn run(&self, config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         if repo.check_has_unsaved()? {
-            println!("save or discard unsaved changes first");
+            report!(sender, "save or discard unsaved changes first");
             return Ok(());
         }
 
@@ -31,13 +38,13 @@ impl Runnable for ApplyOp {
         let maybe_files = file::canonicalize_optional_paths(self.files.as_ref());
 
         if let Some(files) = maybe_files {
+            report!(sender, "preparing selected files");
             metadata
                 .files
                 .retain(|file| files.contains(&file.system_path));
         }
 
         for file_data in metadata.files.iter() {
-            tracing::trace!(entry=?file_data.system_path ,"handling file");
             if !self.no_confirm {
                 let prompt = format!("Do you want to apply '{}'", file_data.system_path.display());
                 if let Ok(false) = Confirm::with_theme(&ColorfulTheme::default())
@@ -59,6 +66,7 @@ impl Runnable for ApplyOp {
             file::copy_from_repo(file_data, &config.encryption.passphrase)?;
         }
 
+        report!(sender, "done!");
         Ok(())
     }
 }

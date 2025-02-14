@@ -30,7 +30,7 @@ fn main() {
     let task_handle = operation.execute();
 
     while let Ok(message) = receiver.recv() {
-        println!("message: {message}");
+        println!("{message}");
     }
 
     if let Ok(Err(err)) = task_handle.join() {

@@ -1,4 +1,4 @@
-use std::thread::JoinHandle;
+use std::{fmt::Display, thread::JoinHandle};
 
 use add::AddOp;
 use anyhow::Result;
@@ -38,17 +38,38 @@ pub mod save;
 pub mod status;
 pub mod verify_cache;
 
+#[macro_export]
+macro_rules! report {
+    ($sender:tt, $message:expr) => {
+        if let Some(tx) = $sender.as_ref() {
+            match tx.send(Box::new($message)) {
+                Ok(()) => {},
+                Err(e) => eprintln!("ERROR: {e:?}"),
+            }
+        }
+    };
+    ($sender:tt, $base:expr, $($arg:expr),*) => {
+        report!($sender, format!($base, $($arg),*))
+    };
+}
+
 pub trait Runnable {
-    fn run(&self, config: Config, paths: Paths, report_fn: Box<dyn Fn(String)>) -> Result<()>;
+    fn run(
+        &self,
+        config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()>;
+
     fn run_silent(&self, config: Config, paths: Paths) -> Result<()> {
-        self.run(config, paths, Box::new(|_| {}))
+        self.run(config, paths, None)
     }
 }
 
 type RunnableOperation = Box<dyn Runnable + Send + Sync>;
 
 pub struct Operation {
-    tx: Option<Sender<String>>,
+    tx: Option<Sender<Box<dyn Display + Send + Sync>>>,
     inner: RunnableOperation,
     config: Config,
     paths: Paths,
@@ -101,30 +122,15 @@ impl Operation {
         })
     }
 
-    pub fn subscribe(&mut self) -> Receiver<String> {
+    pub fn subscribe(&mut self) -> Receiver<Box<dyn Display + Send + Sync>> {
         let (tx, rx) = crossbeam_channel::unbounded();
         self.tx = Some(tx);
         rx
     }
 
-    fn report(tx: Option<Sender<String>>, message: String) {
-        if let Some(tx) = tx.as_ref() {
-            match tx.send(message) {
-                Ok(()) => {}
-                Err(e) => eprintln!("{e:?}"),
-            }
-        }
-    }
-
     /// execute the operation in a separate thread
     pub fn execute(self) -> JoinHandle<Result<()>> {
-        std::thread::spawn(move || {
-            self.inner.run(
-                self.config,
-                self.paths,
-                Box::new(move |msg| Self::report(self.tx.clone(), msg)),
-            )
-        })
+        std::thread::spawn(move || self.inner.run(self.config, self.paths, self.tx))
     }
 
     /// execute the operation, blocking the main thread

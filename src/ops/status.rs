@@ -1,20 +1,27 @@
-use anyhow::Result;
-use colored::Colorize;
+use std::fmt::Display;
 
-use crate::{config::Config, file::Metadata, git::Repo, paths::Paths};
+use anyhow::Result;
+use crossbeam_channel::Sender;
+
+use crate::{config::Config, file::Metadata, git::Repo, paths::Paths, report};
 
 use super::Runnable;
 
 pub struct StatusOp;
 
 impl Runnable for StatusOp {
-    fn run(&self, _config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        _config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         let status_changes = match repo.status_changes() {
             Ok(Some(status_changes)) => status_changes,
             Ok(None) => {
-                tracing::trace!("no status change found");
+                report!(sender, "no changes found");
                 return Ok(());
             }
             Err(e) => {
@@ -35,12 +42,13 @@ impl Runnable for StatusOp {
             .filter(|(_, fd)| fd.is_some())
             .collect();
 
-        println!("{}", "Unsaved changes:".bold());
+        report!(sender, "unsaved changes:");
 
         for (status_type, file_data) in formatted_changes.iter() {
-            println!(
+            report!(
+                sender,
                 "{}: {}",
-                status_type.into_colored_string(),
+                status_type.to_str(),
                 file_data.unwrap().system_path.display()
             )
         }

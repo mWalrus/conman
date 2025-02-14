@@ -1,12 +1,20 @@
-use anyhow::Result;
+use std::fmt::Display;
 
-use crate::{config::Config, ops::Runnable, paths::Paths};
+use anyhow::Result;
+use crossbeam_channel::Sender;
+
+use crate::{config::Config, ops::Runnable, paths::Paths, report};
 
 pub struct CurrentOp;
 
 impl Runnable for CurrentOp {
-    fn run(&self, config: Config, _paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
-        println!("current branch: {}", config.upstream.branch);
+    fn run(
+        &self,
+        config: Config,
+        _paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
+        report!(sender, config.upstream.branch);
         Ok(())
     }
 }

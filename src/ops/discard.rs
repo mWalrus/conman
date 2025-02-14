@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
+use crossbeam_channel::Sender;
 use dialoguer::{theme::ColorfulTheme, Confirm};
 
 use crate::{
@@ -8,6 +9,7 @@ use crate::{
     file::{self, Metadata},
     git::{Repo, StatusType},
     paths::Paths,
+    report,
 };
 
 use super::Runnable;
@@ -18,7 +20,12 @@ pub struct DiscardOp {
 }
 
 impl Runnable for DiscardOp {
-    fn run(&self, config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         let mut metadata = Metadata::read(&paths.metadata)?;
@@ -26,7 +33,7 @@ impl Runnable for DiscardOp {
         let mut status_changes = match repo.status_changes() {
             Ok(Some(status_changes)) => status_changes,
             Ok(None) => {
-                tracing::trace!("no status change found");
+                report!(sender, "no changes found");
                 return Ok(());
             }
             Err(e) => {
@@ -37,6 +44,7 @@ impl Runnable for DiscardOp {
         let files = file::canonicalize_optional_paths(self.files.as_ref());
 
         if let Some(files) = files {
+            report!(sender, "preparing selected files");
             status_changes.retain(|change| {
                 let Some(file_data) =
                     metadata.get_file_data_where_repo_path_ends_with(&change.relative_path)
@@ -95,6 +103,12 @@ impl Runnable for DiscardOp {
                 continue;
             };
 
+            report!(
+                sender,
+                "discarding file '{}'",
+                file_data.system_path.display()
+            );
+
             match change.status {
                 StatusType::New => {
                     // EXPLANATION: We have to clone because borrow checker
@@ -117,6 +131,8 @@ impl Runnable for DiscardOp {
             metadata.persist()?;
             file::write_cache(&metadata, &paths.metadata_cache)?;
         }
+
+        report!(sender, "done!");
 
         Ok(())
     }

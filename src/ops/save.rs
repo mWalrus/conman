@@ -1,10 +1,14 @@
+use std::fmt::Display;
+
 use anyhow::Result;
+use crossbeam_channel::Sender;
 
 use crate::{
     config::Config,
     file::Metadata,
     git::{Repo, StatusChange},
     paths::Paths,
+    report,
 };
 
 use super::Runnable;
@@ -12,13 +16,18 @@ use super::Runnable;
 pub struct SaveOp;
 
 impl Runnable for SaveOp {
-    fn run(&self, _config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        _config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         let status_changes = match repo.status_changes() {
             Ok(Some(status_changes)) => status_changes,
             Ok(None) => {
-                tracing::trace!("no status change found, skipping save");
+                report!(sender, "no status change found, skipping save");
                 return Ok(());
             }
             Err(e) => {
@@ -30,6 +39,8 @@ impl Runnable for SaveOp {
 
         let commit_message = construct_commit_message(&metadata, status_changes);
         repo.commit_changes(commit_message)?;
+
+        report!(sender, "saved!");
 
         Ok(())
     }

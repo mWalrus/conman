@@ -1,11 +1,13 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
+use crossbeam_channel::Sender;
 
 use crate::{
     config::Config,
     file::{self, FileData, Metadata},
     paths::Paths,
+    report,
 };
 
 use super::Runnable;
@@ -16,12 +18,19 @@ pub struct AddOp {
 }
 
 impl Runnable for AddOp {
-    fn run(&self, config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let mut metadata = Metadata::read(&paths.metadata)?;
 
         let sources = file::canonicalize_paths(&self.files);
 
         for source in sources.into_iter() {
+            report!(sender, "adding file '{}'", source.display());
+
             let source_path = std::fs::canonicalize(source)?;
 
             tracing::trace!(source=?source_path, "canonicalized source path");
@@ -44,6 +53,7 @@ impl Runnable for AddOp {
 
         file::write_cache(&metadata, &paths.metadata_cache)?;
 
+        report!(sender, "done!");
         Ok(())
     }
 }

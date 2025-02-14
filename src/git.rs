@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
-use colored::{ColoredString, Colorize};
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     AnnotatedCommit, AutotagOption, BranchType, Cred, CredentialType, Error, FetchOptions,
@@ -35,16 +34,6 @@ pub enum StatusType {
 }
 
 impl StatusType {
-    pub fn into_colored_string(&self) -> ColoredString {
-        match self {
-            StatusType::New => "new".green(),
-            StatusType::Modified => "modified".yellow(),
-            StatusType::Deleted => "deleted".red(),
-            StatusType::Renamed => "renamed".magenta(),
-            StatusType::TypeChange => "typechange".blue(),
-        }
-    }
-
     pub fn to_str(&self) -> &'_ str {
         match self {
             StatusType::New => "new",

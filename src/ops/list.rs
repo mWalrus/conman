@@ -1,36 +1,43 @@
-use anyhow::Result;
-use colored::Colorize;
+use std::fmt::Display;
 
-use crate::{config::Config, file::Metadata, paths::Paths};
+use anyhow::Result;
+use crossbeam_channel::Sender;
+
+use crate::{config::Config, file::Metadata, paths::Paths, report};
 
 use super::Runnable;
 
 pub struct ListOp;
 
 impl Runnable for ListOp {
-    fn run(&self, _config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        _config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let metadata = Metadata::read(&paths.metadata)?;
 
-        println!("{}", "Managed files:".bold());
-        for (i, file) in metadata.files.iter().enumerate() {
-            let encrypted_text = if file.encrypted {
-                "true".green()
-            } else {
-                "false".red()
-            };
+        let encrypted_count = metadata.files.iter().filter(|file| file.encrypted).count();
+        let non_encrypted_count = metadata.files.len() - encrypted_count;
 
-            println!(
-                "{} {}",
-                "File".blue().bold(),
-                (i + 1).to_string().blue().bold()
-            );
-            println!(
-                "  {}: {}",
-                "Path".bold(),
-                file.system_path.display().to_string().underline()
-            );
-            println!("  {}: {}", "Encrypted".bold(), encrypted_text);
+        let encrypted = metadata.files.iter().filter(|file| file.encrypted);
+        let non_encrypted = metadata.files.iter().filter(|file| !file.encrypted);
+
+        if encrypted_count > 0 {
+            report!(sender, "encrypted files:");
+            for file in encrypted {
+                report!(sender, "{}", file.system_path.display());
+            }
         }
+
+        if non_encrypted_count > 0 {
+            report!(sender, "non-encrypted files:");
+            for file in non_encrypted {
+                report!(sender, "{}", file.system_path.display());
+            }
+        }
+
         Ok(())
     }
 }

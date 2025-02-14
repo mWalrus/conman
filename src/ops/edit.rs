@@ -1,12 +1,14 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
+use crossbeam_channel::Sender;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 
 use crate::{
     config::Config,
     file::{self, Metadata},
     paths::Paths,
+    report,
 };
 
 use super::Runnable;
@@ -17,7 +19,12 @@ pub struct EditOp {
 }
 
 impl Runnable for EditOp {
-    fn run(&self, config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let metadata = Metadata::read(&paths.metadata)?;
 
         let maybe_file_data = match &self.path {
@@ -42,9 +49,11 @@ impl Runnable for EditOp {
             return Ok(());
         };
 
+        report!(sender, "editing '{}'...", &file_data.system_path.display());
+
         edit::edit_file(&file_data.system_path)?;
 
-        tracing::trace!("user done editing");
+        report!(sender, "handling edited file...");
 
         if self.skip_update {
             tracing::trace!("skipping updating internal copy of the file");
@@ -56,11 +65,13 @@ impl Runnable for EditOp {
         tracing::Span::current().record("source_was_updated", source_was_updated);
 
         if !source_was_updated {
-            tracing::trace!("skipping copy of identical files");
+            report!(sender, "no changes made, nothing to do");
             return Ok(());
         }
 
         file::copy_from_system(file_data, &config.encryption.passphrase)?;
+        report!(sender, "done!");
+
         Ok(())
     }
 }

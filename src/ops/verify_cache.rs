@@ -1,5 +1,7 @@
+use std::fmt::Display;
+
 use anyhow::Result;
-use colored::Colorize;
+use crossbeam_channel::Sender;
 use dialoguer::theme::ColorfulTheme;
 
 use crate::{
@@ -7,6 +9,7 @@ use crate::{
     file::{self, CacheVerdict, Metadata},
     git::Repo,
     paths::Paths,
+    report,
 };
 
 use super::Runnable;
@@ -14,7 +17,12 @@ use super::Runnable;
 pub struct VerifyCacheOp;
 
 impl Runnable for VerifyCacheOp {
-    fn run(&self, config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let Ok(repo) = Repo::open(&paths) else {
             return Ok(());
         };
@@ -35,9 +43,9 @@ impl Runnable for VerifyCacheOp {
                 file::write_cache(&metadata, &paths.metadata_cache)?
             }
             CacheVerdict::HandleDangling(dangling) => {
-                println!(
-                    "{}",
-                    "Detected differences in managed files since last run!".bold()
+                report!(
+                    sender,
+                    "detected differences in managed files since last run!"
                 );
 
                 let file_options = ["skip", "delete", "manage"];
@@ -55,15 +63,15 @@ impl Runnable for VerifyCacheOp {
                     match file_options[choice] {
                         "delete" => {
                             std::fs::remove_file(&file.system_path)?;
-                            tracing::trace!("deleted file {}", file.system_path.display());
-                            println!("{}", "Deleted!".bold().green());
+                            report!(sender, "deleted file");
                         }
                         "manage" => {
                             file::copy_from_system(&file, &config.encryption.passphrase)?;
                             metadata.manage_file(file);
+                            report!(sender, "managed file");
                         }
                         "skip" => {
-                            tracing::trace!("skipping file");
+                            report!(sender, "skipping file");
                         }
                         _ => unreachable!(),
                     }

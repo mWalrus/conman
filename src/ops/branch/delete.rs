@@ -1,12 +1,20 @@
+use std::fmt::Display;
+
 use anyhow::Result;
+use crossbeam_channel::Sender;
 use dialoguer::{theme::ColorfulTheme, Confirm};
 
-use crate::{config::Config, git::Repo, ops::Runnable, paths::Paths};
+use crate::{config::Config, git::Repo, ops::Runnable, paths::Paths, report};
 
 pub struct DeleteOp(pub String);
 
 impl Runnable for DeleteOp {
-    fn run(&self, _config: Config, paths: Paths, _report_fn: Box<dyn Fn(String)>) -> Result<()> {
+    fn run(
+        &self,
+        _config: Config,
+        paths: Paths,
+        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    ) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         let confirmation = Confirm::with_theme(&ColorfulTheme::default())
@@ -15,6 +23,9 @@ impl Runnable for DeleteOp {
 
         if confirmation {
             repo.delete_branch(&self.0)?;
+            report!(sender, "deleted branch {}", &self.0);
+        } else {
+            report!(sender, "no branch deleted");
         }
 
         Ok(())
