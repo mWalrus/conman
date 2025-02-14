@@ -49,11 +49,11 @@ impl Runnable for EditOp {
             return Ok(());
         };
 
-        report!(sender, "editing '{}'...", &file_data.system_path.display());
+        report!(sender, "editing '{}'", &file_data.system_path.display());
 
         edit::edit_file(&file_data.system_path)?;
 
-        report!(sender, "handling edited file...");
+        report!(sender, "handling edited file");
 
         if self.skip_update {
             tracing::trace!("skipping updating internal copy of the file");
