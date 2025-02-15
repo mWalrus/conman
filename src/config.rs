@@ -8,18 +8,18 @@ use tracing::instrument;
 
 const CONFIG_FILE_NAME: &str = "config.toml";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub encryption: EncryptionConfig,
     pub upstream: UpstreamConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct EncryptionConfig {
     pub passphrase: String, // we will use this together with `age` for file encryption
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct UpstreamConfig {
     pub url: String,
     #[serde(default, deserialize_with = "path_resolver")]
@@ -51,8 +51,7 @@ pub fn default_branch() -> String {
 impl Config {
     #[instrument]
     pub fn read() -> Result<Self> {
-        let config = Self::config_dir()?;
-        let config_file = Self::config_file(&config);
+        let config_file = Self::config_file();
 
         let mut config_file = File::open(&config_file)?;
 
@@ -67,8 +66,7 @@ impl Config {
 
     #[instrument(skip(self))]
     pub fn write(&self) -> Result<()> {
-        let config = Self::config_dir()?;
-        let config_file = Self::config_file(&config);
+        let config_file = Self::config_file();
 
         let toml = toml::to_string(&self)?;
         tracing::trace!("serialized config");
@@ -81,8 +79,7 @@ impl Config {
 
     #[instrument]
     pub fn write_default_config() -> Result<()> {
-        let config = Self::config_dir()?;
-        let config_file = Self::config_file(&config);
+        let config_file = Self::config_file();
 
         println!("Config file not found, creating default...");
         let default_config = Self::default();
@@ -100,19 +97,12 @@ impl Config {
         Ok(())
     }
 
-    fn config_dir() -> Result<PathBuf> {
+    fn config_file() -> PathBuf {
         let base_dirs = BaseDirs::new().unwrap();
-
-        let config = base_dirs.config_dir().join(APPLICATION_NAME);
-        if !std::fs::exists(&config)? {
-            std::fs::create_dir(&config)?;
-            tracing::trace!("created $HOME/.config/{APPLICATION_NAME}");
-        }
-        Ok(config)
-    }
-
-    fn config_file(config_dir: &PathBuf) -> PathBuf {
-        config_dir.join(CONFIG_FILE_NAME)
+        base_dirs
+            .config_dir()
+            .join(APPLICATION_NAME)
+            .join(CONFIG_FILE_NAME)
     }
 }
 
