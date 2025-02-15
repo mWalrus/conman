@@ -307,4 +307,33 @@ mod tests {
 
         repo.destroy(paths.repo);
     }
+
+    #[test]
+    fn remove_one_out_of_two_files() {
+        let (paths, config, repo, files) = add_files(vec![
+            "remove_one_out_of_two_files_1",
+            "remove_one_out_of_two_files_2",
+        ]);
+
+        let file_1 = files[0].clone();
+        let file_2 = files[1].clone();
+
+        Operation::new(Command::Remove {
+            files: vec![file_1.clone()],
+        })
+        .unwrap()
+        .execute_test(&paths, &config);
+
+        let metadata = Metadata::read(&paths.metadata).unwrap();
+
+        assert!(!metadata.file_is_already_managed(&file_1));
+        std::fs::remove_file(file_1).unwrap();
+
+        assert!(metadata.file_is_already_managed(&file_2));
+        std::fs::remove_file(file_2).unwrap();
+
+        assert_eq!(metadata.files.len(), 1);
+
+        repo.destroy(paths.repo);
+    }
 }
