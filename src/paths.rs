@@ -13,6 +13,7 @@ pub(crate) const METADATA_FILE_NAME: &str = "_conman_internal_metadata.toml";
 pub(crate) const METADATA_CACHE_FILE_NAME: &str = "_metadata_cache.toml";
 pub(crate) const REPO_DIRECTORY: &str = "_conman_repo";
 
+#[derive(Clone)]
 pub struct Paths {
     pub repo: PathBuf,
     pub metadata: PathBuf,
