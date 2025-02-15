@@ -618,3 +618,28 @@ impl Repo {
         Ok(branch_names)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use git2::Repository;
+
+    use super::Repo;
+
+    impl Repo {
+        pub fn create_at_path(path: &PathBuf) -> Self {
+            let repo = Repository::init(&path).unwrap();
+
+            let repo = Self { inner: repo };
+
+            repo.make_initial_commit().unwrap();
+
+            repo
+        }
+
+        pub fn destroy(self, path: PathBuf) {
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+}

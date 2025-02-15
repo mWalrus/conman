@@ -138,3 +138,173 @@ impl Operation {
         self.inner.run_silent(self.config, self.paths)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, io::Write, path::PathBuf, sync::LazyLock};
+
+    use crate::{
+        args::Command,
+        file::Metadata,
+        git::Repo,
+        ops::Operation,
+        paths::{METADATA_CACHE_FILE_NAME, METADATA_FILE_NAME},
+    };
+
+    use super::*;
+    use anyhow::Result;
+    use rand::{distr::Alphanumeric, Rng};
+
+    static TEST_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| std::env::temp_dir().join("conman_test"));
+
+    impl Repo {}
+
+    impl Operation {
+        fn state() -> (Paths, Config) {
+            let repo_dir_name: String = rand::rng()
+                .sample_iter(Alphanumeric)
+                .take(12)
+                .map(char::from)
+                .collect();
+
+            let cache_file_name = format!("{repo_dir_name}{METADATA_CACHE_FILE_NAME}");
+            let repo_path = TEST_PATH.join(repo_dir_name);
+
+            let paths = Paths {
+                metadata: repo_path.join(METADATA_FILE_NAME),
+                repo: repo_path,
+                metadata_cache: TEST_PATH.join(cache_file_name),
+            };
+            let config = Config {
+                encryption: crate::config::EncryptionConfig {
+                    passphrase: "12345".into(),
+                },
+                ..Default::default()
+            };
+
+            (paths, config)
+        }
+        fn execute_test(self, paths: &Paths, config: &Config) {
+            self.inner.run(config.clone(), paths.clone(), None).unwrap();
+        }
+    }
+
+    fn create_temp_file(name: &str) -> Result<PathBuf> {
+        let path = TEST_PATH.join(name);
+        let mut file = File::create(&path)?;
+
+        let content = b"test content";
+        let content_len = content.len();
+
+        let written = file.write(content)?;
+
+        assert_eq!(content_len, written);
+
+        Ok(path)
+    }
+
+    fn add_files(files: Vec<&str>) -> (Paths, Config, Repo, Vec<PathBuf>) {
+        let (paths, config) = Operation::state();
+
+        let repo = Repo::create_at_path(&paths.repo);
+
+        let files_len = files.len();
+
+        let created_tmp_files: Vec<_> = files
+            .into_iter()
+            .map(|file| create_temp_file(file))
+            .flatten()
+            .collect();
+
+        assert_eq!(files_len, created_tmp_files.len());
+
+        let cmd = Command::Add {
+            files: created_tmp_files.clone(),
+            encrypt: false,
+        };
+
+        Operation::new(cmd).unwrap().execute_test(&paths, &config);
+
+        (paths, config, repo, created_tmp_files)
+    }
+
+    #[test]
+    fn create() {
+        let repo_dir_name: String = rand::rng()
+            .sample_iter(Alphanumeric)
+            .take(12)
+            .map(char::from)
+            .collect();
+
+        let repo_path = TEST_PATH.join(repo_dir_name);
+
+        Repo::create_at_path(&repo_path).destroy(repo_path);
+    }
+
+    #[test]
+    fn add_unencrypted() {
+        let (paths, _config, repo, files) = add_files(vec!["add_unencrypted"]);
+
+        // NOTE: we have to read the metadata again after we execute the operation
+        let metadata = Metadata::read(&paths.metadata).unwrap();
+
+        assert!(!metadata.files.is_empty());
+
+        for file in files.into_iter() {
+            assert!(metadata.file_is_already_managed(&file));
+
+            let file_data = metadata.get_file_data_by_system_path(&file).unwrap();
+
+            assert!(!file_data.encrypted);
+
+            std::fs::remove_file(file).unwrap();
+        }
+
+        repo.destroy(paths.repo);
+    }
+
+    #[test]
+    fn add_encrypted() {
+        let (paths, _config, repo, files) = add_files(vec!["add_encrypted"]);
+
+        // NOTE: we have to read the metadata again after we execute the operation
+        let metadata = Metadata::read(&paths.metadata).unwrap();
+
+        assert!(!metadata.files.is_empty());
+
+        for file in files.into_iter() {
+            assert!(metadata.file_is_already_managed(&file));
+
+            let file_data = metadata.get_file_data_by_system_path(&file).unwrap();
+
+            assert!(!file_data.encrypted);
+
+            std::fs::remove_file(file).unwrap();
+        }
+
+        repo.destroy(paths.repo);
+    }
+
+    #[test]
+    fn remove_file() {
+        let (paths, config, repo, files) = add_files(vec!["add_and_remove"]);
+
+        Operation::new(Command::Remove {
+            files: files.clone(),
+        })
+        .unwrap()
+        .execute_test(&paths, &config);
+
+        let metadata = Metadata::read(&paths.metadata).unwrap();
+
+        for file in files.into_iter() {
+            assert!(!metadata.file_is_already_managed(&file));
+            std::fs::remove_file(file).unwrap();
+        }
+
+        assert!(metadata.files.is_empty());
+
+        repo.destroy(paths.repo);
+    }
+}
