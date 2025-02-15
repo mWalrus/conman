@@ -5,7 +5,7 @@ use crossbeam_channel::Sender;
 
 use crate::{
     config::Config,
-    file::Metadata,
+    file::{self, Metadata},
     git::{Repo, StatusChange},
     paths::Paths,
     report,
@@ -39,6 +39,8 @@ impl Runnable for SaveOp {
 
         let commit_message = construct_commit_message(&metadata, status_changes);
         repo.commit_changes(commit_message)?;
+
+        file::write_cache(&metadata, &paths.metadata_cache)?;
 
         report!(sender, "saved!");
 

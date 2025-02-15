@@ -51,8 +51,6 @@ impl Runnable for AddOp {
 
         metadata.persist()?;
 
-        file::write_cache(&metadata, &paths.metadata_cache)?;
-
         report!(sender, "done!");
         Ok(())
     }
