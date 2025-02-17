@@ -363,7 +363,8 @@ mod tests {
         drop(metadata);
 
         // simulate edit
-        std::fs::write(&files[0], b"we have made some epic changes to the file").unwrap();
+        let edit = b"we have made some epic changes to the file";
+        std::fs::write(&files[0], edit).unwrap();
 
         Operation::new(Command::Collect {
             files: None,
@@ -386,9 +387,74 @@ mod tests {
 
         let file_data = file_data.unwrap();
 
+        let content_in_file_after_collect = std::fs::read(&file_data.repo_path).unwrap();
+        assert_eq!(edit, content_in_file_after_collect.as_slice());
+
         let change = &changes[0];
         assert!(change.status == StatusType::Modified);
         assert!(file_data.repo_path.ends_with(&change.relative_path));
+
+        cleanup(paths, Some(files));
+    }
+
+    #[test]
+    fn discard_changes() {
+        let (paths, config, files) = add_files(vec!["discard_changes"], false);
+
+        // save to be able to discover modifications
+        Operation::new(Command::Save)
+            .unwrap()
+            .execute_test(&paths, &config);
+
+        let content_in_file_before_edit = std::fs::read(&files[0]).unwrap();
+
+        // simulate edit
+        let edit = b"we have made some epic changes to the file";
+        std::fs::write(&files[0], edit).unwrap();
+
+        Operation::new(Command::Collect {
+            files: None,
+            no_confirm: true,
+        })
+        .unwrap()
+        .execute_test(&paths, &config);
+
+        let repo = Repo::open(&paths).unwrap();
+
+        let changes = repo.status_changes().unwrap();
+        assert!(changes.is_some());
+
+        let changes = changes.unwrap();
+        assert!(changes.len() == 1);
+
+        let metadata = Metadata::read(&paths.metadata).unwrap();
+        let file_data = metadata.get_file_data_by_system_path(&files[0]);
+        assert!(file_data.is_some());
+
+        let file_data = file_data.unwrap();
+
+        let content_in_file_after_collect = std::fs::read(&file_data.repo_path).unwrap();
+        assert_eq!(edit, content_in_file_after_collect.as_slice());
+
+        let change = &changes[0];
+        assert!(change.status == StatusType::Modified);
+        assert!(file_data.repo_path.ends_with(&change.relative_path));
+
+        Operation::new(Command::Discard {
+            files: Some(files.clone()),
+            no_confirm: true,
+        })
+        .unwrap()
+        .execute_test(&paths, &config);
+
+        let repo = Repo::open(&paths).unwrap();
+
+        let changes = repo.status_changes().unwrap();
+        assert!(changes.is_none());
+
+        let content_in_file_after_discard = std::fs::read(&files[0]).unwrap();
+
+        assert_eq!(content_in_file_before_edit, content_in_file_after_discard);
 
         cleanup(paths, Some(files));
     }
