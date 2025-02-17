@@ -47,10 +47,12 @@ impl Runnable for ApplyOp {
         for file_data in metadata.files.iter() {
             if !self.no_confirm {
                 let prompt = format!("Do you want to apply '{}'", file_data.system_path.display());
-                if let Ok(false) = Confirm::with_theme(&ColorfulTheme::default())
+
+                let confirmation = Confirm::with_theme(&ColorfulTheme::default())
                     .with_prompt(prompt)
-                    .interact()
-                {
+                    .interact()?;
+
+                if !confirmation {
                     continue;
                 }
             }
