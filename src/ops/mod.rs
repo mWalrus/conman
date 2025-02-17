@@ -10,6 +10,7 @@ use diff::DiffOp;
 use discard::DiscardOp;
 use edit::EditOp;
 use list::ListOp;
+use pull::PullOp;
 use push::PushOp;
 use remove::RemoveOp;
 use save::SaveOp;
@@ -90,7 +91,7 @@ impl Operation {
             Command::Edit { path, skip_update } => Box::new(EditOp { path, skip_update }),
             Command::Save => Box::new(SaveOp),
             Command::Push => Box::new(PushOp),
-            Command::Pull => todo!(),
+            Command::Pull => Box::new(PullOp),
             Command::Add { files, encrypt } => Box::new(AddOp { files, encrypt }),
             Command::List => Box::new(ListOp),
             Command::Remove { files } => Box::new(RemoveOp { files }),
