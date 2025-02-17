@@ -230,12 +230,18 @@ mod tests {
     fn cleanup(paths: Paths, maybe_files: Option<Vec<PathBuf>>) {
         if let Some(files) = maybe_files {
             for file in files.into_iter() {
-                std::fs::remove_file(file).unwrap();
+                if file.exists() {
+                    std::fs::remove_file(file).unwrap();
+                }
             }
         }
 
-        std::fs::remove_file(&paths.metadata_cache).unwrap();
-        std::fs::remove_dir_all(&paths.repo).unwrap();
+        if paths.metadata_cache.exists() {
+            std::fs::remove_file(&paths.metadata_cache).unwrap();
+        }
+        if paths.repo.exists() {
+            std::fs::remove_dir_all(&paths.repo).unwrap();
+        }
     }
 
     #[test]
