@@ -146,7 +146,7 @@ mod tests {
     use crate::{
         args::Command,
         file::Metadata,
-        git::Repo,
+        git::{Repo, StatusType},
         ops::Operation,
         paths::{METADATA_CACHE_FILE_NAME, METADATA_FILE_NAME},
     };
@@ -157,8 +157,6 @@ mod tests {
 
     static TEST_PATH: LazyLock<PathBuf> =
         LazyLock::new(|| std::env::temp_dir().join("conman_test"));
-
-    impl Repo {}
 
     impl Operation {
         fn state() -> (Paths, Config) {
@@ -204,10 +202,10 @@ mod tests {
         Ok(path)
     }
 
-    fn add_files(files: Vec<&str>) -> (Paths, Config, Repo, Vec<PathBuf>) {
+    fn add_files(files: Vec<&str>, encrypt: bool) -> (Paths, Config, Vec<PathBuf>) {
         let (paths, config) = Operation::state();
 
-        let repo = Repo::create_at_path(&paths.repo);
+        Repo::create_at_path(&paths.repo);
 
         let files_len = files.len();
 
@@ -221,12 +219,23 @@ mod tests {
 
         let cmd = Command::Add {
             files: created_tmp_files.clone(),
-            encrypt: false,
+            encrypt,
         };
 
         Operation::new(cmd).unwrap().execute_test(&paths, &config);
 
-        (paths, config, repo, created_tmp_files)
+        (paths, config, created_tmp_files)
+    }
+
+    fn cleanup(paths: Paths, maybe_files: Option<Vec<PathBuf>>) {
+        if let Some(files) = maybe_files {
+            for file in files.into_iter() {
+                std::fs::remove_file(file).unwrap();
+            }
+        }
+
+        std::fs::remove_file(&paths.metadata_cache).unwrap();
+        std::fs::remove_dir_all(&paths.repo).unwrap();
     }
 
     #[test]
@@ -239,56 +248,55 @@ mod tests {
 
         let repo_path = TEST_PATH.join(repo_dir_name);
 
-        Repo::create_at_path(&repo_path).destroy(repo_path);
+        Repo::create_at_path(&repo_path);
+        std::fs::remove_dir_all(&repo_path).unwrap();
     }
 
     #[test]
     fn add_unencrypted() {
-        let (paths, _config, repo, files) = add_files(vec!["add_unencrypted"]);
+        let (paths, _config, files) = add_files(vec!["add_unencrypted"], false);
 
         // NOTE: we have to read the metadata again after we execute the operation
         let metadata = Metadata::read(&paths.metadata).unwrap();
 
         assert!(!metadata.files.is_empty());
 
-        for file in files.into_iter() {
+        for file in files.iter() {
             assert!(metadata.file_is_already_managed(&file));
 
             let file_data = metadata.get_file_data_by_system_path(&file).unwrap();
 
             assert!(!file_data.encrypted);
-
-            std::fs::remove_file(file).unwrap();
         }
 
-        repo.destroy(paths.repo);
+        cleanup(paths, Some(files));
     }
 
     #[test]
     fn add_encrypted() {
-        let (paths, _config, repo, files) = add_files(vec!["add_encrypted"]);
+        let (paths, _config, files) = add_files(vec!["add_encrypted"], true);
 
         // NOTE: we have to read the metadata again after we execute the operation
         let metadata = Metadata::read(&paths.metadata).unwrap();
 
         assert!(!metadata.files.is_empty());
 
-        for file in files.into_iter() {
+        for file in files.iter() {
             assert!(metadata.file_is_already_managed(&file));
 
             let file_data = metadata.get_file_data_by_system_path(&file).unwrap();
 
-            assert!(!file_data.encrypted);
+            assert!(file_data.encrypted);
 
             std::fs::remove_file(file).unwrap();
         }
 
-        repo.destroy(paths.repo);
+        cleanup(paths, Some(files));
     }
 
     #[test]
     fn remove_file() {
-        let (paths, config, repo, files) = add_files(vec!["add_and_remove"]);
+        let (paths, config, files) = add_files(vec!["add_and_remove"], false);
 
         Operation::new(Command::Remove {
             files: files.clone(),
@@ -298,22 +306,24 @@ mod tests {
 
         let metadata = Metadata::read(&paths.metadata).unwrap();
 
-        for file in files.into_iter() {
+        for file in files.iter() {
             assert!(!metadata.file_is_already_managed(&file));
-            std::fs::remove_file(file).unwrap();
         }
 
         assert!(metadata.files.is_empty());
 
-        repo.destroy(paths.repo);
+        cleanup(paths, Some(files));
     }
 
     #[test]
     fn remove_one_out_of_two_files() {
-        let (paths, config, repo, files) = add_files(vec![
-            "remove_one_out_of_two_files_1",
-            "remove_one_out_of_two_files_2",
-        ]);
+        let (paths, config, files) = add_files(
+            vec![
+                "remove_one_out_of_two_files_1",
+                "remove_one_out_of_two_files_2",
+            ],
+            false,
+        );
 
         let file_1 = files[0].clone();
         let file_2 = files[1].clone();
@@ -327,13 +337,53 @@ mod tests {
         let metadata = Metadata::read(&paths.metadata).unwrap();
 
         assert!(!metadata.file_is_already_managed(&file_1));
-        std::fs::remove_file(file_1).unwrap();
-
         assert!(metadata.file_is_already_managed(&file_2));
-        std::fs::remove_file(file_2).unwrap();
-
         assert_eq!(metadata.files.len(), 1);
 
-        repo.destroy(paths.repo);
+        cleanup(paths, Some(files));
+    }
+
+    #[test]
+    fn edit_file_unencrypted() {
+        let (paths, config, files) = add_files(vec!["edit_file_unencrypted"], false);
+
+        // save to be able to discover modifications
+        Operation::new(Command::Save)
+            .unwrap()
+            .execute_test(&paths, &config);
+
+        let metadata = Metadata::read(&paths.metadata).unwrap();
+        assert!(metadata.file_is_already_managed(&files[0]));
+        drop(metadata);
+
+        // simulate edit
+        std::fs::write(&files[0], b"we have made some epic changes to the file").unwrap();
+
+        Operation::new(Command::Collect {
+            files: None,
+            no_confirm: true,
+        })
+        .unwrap()
+        .execute_test(&paths, &config);
+
+        let repo = Repo::open(&paths).unwrap();
+
+        let changes = repo.status_changes().unwrap();
+        assert!(changes.is_some());
+
+        let changes = changes.unwrap();
+        assert!(changes.len() == 1);
+
+        let metadata = Metadata::read(&paths.metadata).unwrap();
+        let file_data = metadata.get_file_data_by_system_path(&files[0]);
+        assert!(file_data.is_some());
+
+        let file_data = file_data.unwrap();
+
+        let change = &changes[0];
+        assert!(change.status == StatusType::Modified);
+        assert!(file_data.repo_path.ends_with(&change.relative_path));
+
+        cleanup(paths, Some(files));
     }
 }
