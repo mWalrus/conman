@@ -49,7 +49,6 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    /// read the `Metadata` at the given path
     #[instrument]
     pub fn read(path: &PathBuf) -> Result<Self> {
         let mut metadata = match File::open(&path) {
@@ -72,27 +71,22 @@ impl Metadata {
         Ok(metadata)
     }
 
-    /// get the `FileData` at the given index
     pub fn get_file_data_by_index(&self, index: usize) -> Option<&FileData> {
         self.files.get(index)
     }
 
-    ///  get the `FileData` holding the given system path
     pub fn get_file_data_by_system_path(&self, system_path: &PathBuf) -> Option<&FileData> {
         self.files
             .iter()
             .find(|file| file.system_path.eq(system_path))
     }
 
-    /// find the `FileData` whose repo_path ends with the given path
     pub fn get_file_data_where_repo_path_ends_with(&self, path: &PathBuf) -> Option<&FileData> {
         self.files
             .iter()
             .find(|file| file.repo_path.ends_with(path))
     }
 
-    /// check whether the source path is already managed by conman
-    #[instrument(skip(self))]
     pub fn file_is_already_managed(&self, system_path: &PathBuf) -> bool {
         for managed_file in self.files.iter() {
             if managed_file.system_path.eq(system_path) {
@@ -125,6 +119,7 @@ impl Metadata {
         Ok(Some(self.files.remove(index)))
     }
 
+    #[instrument(skip(self))]
     pub fn persist(&self) -> Result<()> {
         let metadata = toml::to_string(self)?;
 

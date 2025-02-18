@@ -1,21 +1,14 @@
-use std::fmt::Display;
-
 use anyhow::Result;
 use crossbeam_channel::Sender;
 
-use crate::{config::Config, file::Metadata, paths::Paths, report};
+use crate::{config::Config, file::Metadata, ops::Message, paths::Paths, report};
 
 use super::Runnable;
 
 pub struct ListOp;
 
 impl Runnable for ListOp {
-    fn run(
-        &self,
-        _config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, _config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let metadata = Metadata::read(&paths.metadata)?;
 
         let encrypted_count = metadata.files.iter().filter(|file| file.encrypted).count();

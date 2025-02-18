@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use crossbeam_channel::Sender;
@@ -11,7 +11,7 @@ use crate::{
     report,
 };
 
-use super::Runnable;
+use super::{Message, Runnable};
 
 pub struct CollectOp {
     pub files: Option<Vec<PathBuf>>,
@@ -19,12 +19,7 @@ pub struct CollectOp {
 }
 
 impl Runnable for CollectOp {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let mut metadata = Metadata::read(&paths.metadata)?;
 
         let maybe_files = file::canonicalize_optional_paths(self.files.as_ref());

@@ -39,6 +39,10 @@ pub mod save;
 pub mod status;
 pub mod verify_cache;
 
+type RunnableOperation = Box<dyn Runnable + Send + Sync>;
+pub type Message = Box<dyn Display + Send + Sync>;
+
+/// Convenience macro for sending progress reports through a given channel
 #[macro_export]
 macro_rules! report {
     ($sender:tt, $message:expr) => {
@@ -55,28 +59,24 @@ macro_rules! report {
 }
 
 pub trait Runnable {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()>;
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()>;
 
     fn run_silent(&self, config: Config, paths: Paths) -> Result<()> {
         self.run(config, paths, None)
     }
 }
 
-type RunnableOperation = Box<dyn Runnable + Send + Sync>;
-
+/// An `Operation` is a runnable task constructed from a given command-line argument and their
+/// parameters. It can be run in a blocking or non-blocking manner.
 pub struct Operation {
-    tx: Option<Sender<Box<dyn Display + Send + Sync>>>,
+    tx: Option<Sender<Message>>,
     inner: RunnableOperation,
     config: Config,
     paths: Paths,
 }
 
 impl Operation {
+    /// construct an operation from a given cli arg
     pub fn new(command: Command) -> Result<Self> {
         let inner: RunnableOperation = match command {
             Command::Init => Box::new(CloneOp),
@@ -111,6 +111,7 @@ impl Operation {
         })
     }
 
+    /// create an `Operation` that will validate the current conman cache
     pub fn verify_cache() -> Result<Self> {
         let config = Config::read()?;
         let paths = Paths::new()?;
@@ -123,7 +124,8 @@ impl Operation {
         })
     }
 
-    pub fn subscribe(&mut self) -> Receiver<Box<dyn Display + Send + Sync>> {
+    /// subscribe to progress updates from the current operation
+    pub fn subscribe(&mut self) -> Receiver<Message> {
         let (tx, rx) = crossbeam_channel::unbounded();
         self.tx = Some(tx);
         rx

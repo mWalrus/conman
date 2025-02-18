@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use anyhow::Result;
 use crossbeam_channel::Sender;
 use dialoguer::theme::ColorfulTheme;
@@ -12,17 +10,12 @@ use crate::{
     report,
 };
 
-use super::Runnable;
+use super::{Message, Runnable};
 
 pub struct VerifyCacheOp;
 
 impl Runnable for VerifyCacheOp {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let Ok(repo) = Repo::open(&paths) else {
             return Ok(());
         };

@@ -1,19 +1,18 @@
-use std::fmt::Display;
-
 use anyhow::Result;
 use crossbeam_channel::Sender;
 
-use crate::{config::Config, git::Repo, ops::Runnable, paths::Paths, report};
+use crate::{
+    config::Config,
+    git::Repo,
+    ops::{Message, Runnable},
+    paths::Paths,
+    report,
+};
 
 pub struct CheckoutOp(pub String);
 
 impl Runnable for CheckoutOp {
-    fn run(
-        &self,
-        mut config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, mut config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         config.upstream.branch = self.0.clone();
 
         let repo = Repo::open(&paths)?;

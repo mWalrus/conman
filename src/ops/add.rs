@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use crossbeam_channel::Sender;
@@ -10,7 +10,7 @@ use crate::{
     report,
 };
 
-use super::Runnable;
+use super::{Message, Runnable};
 
 pub struct AddOp {
     pub files: Vec<PathBuf>,
@@ -18,12 +18,7 @@ pub struct AddOp {
 }
 
 impl Runnable for AddOp {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let mut metadata = Metadata::read(&paths.metadata)?;
 
         let sources = file::canonicalize_paths(&self.files);

@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use crossbeam_channel::Sender;
@@ -11,7 +11,7 @@ use crate::{
     report,
 };
 
-use super::Runnable;
+use super::{Message, Runnable};
 
 pub struct EditOp {
     pub path: Option<PathBuf>,
@@ -19,12 +19,7 @@ pub struct EditOp {
 }
 
 impl Runnable for EditOp {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let metadata = Metadata::read(&paths.metadata)?;
 
         let maybe_file_data = match &self.path {

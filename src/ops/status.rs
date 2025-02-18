@@ -1,21 +1,14 @@
-use std::fmt::Display;
-
 use anyhow::Result;
 use crossbeam_channel::Sender;
 
 use crate::{config::Config, file::Metadata, git::Repo, paths::Paths, report};
 
-use super::Runnable;
+use super::{Message, Runnable};
 
 pub struct StatusOp;
 
 impl Runnable for StatusOp {
-    fn run(
-        &self,
-        _config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, _config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         let status_changes = match repo.status_changes() {

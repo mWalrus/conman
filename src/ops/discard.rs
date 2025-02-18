@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use crossbeam_channel::Sender;
@@ -12,7 +12,7 @@ use crate::{
     report,
 };
 
-use super::Runnable;
+use super::{Message, Runnable};
 
 pub struct DiscardOp {
     pub files: Option<Vec<PathBuf>>,
@@ -20,12 +20,7 @@ pub struct DiscardOp {
 }
 
 impl Runnable for DiscardOp {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         let mut metadata = Metadata::read(&paths.metadata)?;
@@ -90,7 +85,6 @@ impl Runnable for DiscardOp {
 
             match change.status {
                 StatusType::New => {
-                    // EXPLANATION: We have to clone because borrow checker
                     metadata.unmanage_file(&file.system_path)?;
                     should_persist_metadata = true;
                 }

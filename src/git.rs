@@ -15,16 +15,19 @@ use crate::{
     paths::{Paths, METADATA_FILE_NAME},
 };
 
+/// A wrapper around a `git2::Repository` that exposes a variety of git-related operations
 pub struct Repo {
     inner: Repository,
 }
 
+/// An abstraction over `'git status'` changes
 #[derive(Debug)]
 pub struct StatusChange {
     pub status: StatusType,
     pub relative_path: PathBuf,
 }
 
+/// the type of status change
 #[derive(Debug, PartialEq, Eq)]
 pub enum StatusType {
     New,
@@ -636,10 +639,6 @@ mod tests {
             repo.make_initial_commit().unwrap();
 
             repo
-        }
-
-        pub fn destroy(self, path: PathBuf) {
-            std::fs::remove_dir_all(path).unwrap();
         }
     }
 }

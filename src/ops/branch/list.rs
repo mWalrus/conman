@@ -1,19 +1,18 @@
-use std::fmt::Display;
-
 use anyhow::Result;
 use crossbeam_channel::Sender;
 
-use crate::{config::Config, git::Repo, ops::Runnable, paths::Paths, report};
+use crate::{
+    config::Config,
+    git::Repo,
+    ops::{Message, Runnable},
+    paths::Paths,
+    report,
+};
 
 pub struct ListOp;
 
 impl Runnable for ListOp {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         let branch_names = repo.local_branch_names()?;

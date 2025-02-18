@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use crossbeam_channel::Sender;
@@ -12,7 +12,7 @@ use crate::{
     report,
 };
 
-use super::Runnable;
+use super::{Message, Runnable};
 
 pub struct ApplyOp {
     pub files: Option<Vec<PathBuf>>,
@@ -20,12 +20,7 @@ pub struct ApplyOp {
 }
 
 impl Runnable for ApplyOp {
-    fn run(
-        &self,
-        config: Config,
-        paths: Paths,
-        sender: Option<Sender<Box<dyn Display + Send + Sync>>>,
-    ) -> Result<()> {
+    fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
         let repo = Repo::open(&paths)?;
 
         if repo.check_has_unsaved()? {
