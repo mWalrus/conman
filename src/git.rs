@@ -365,59 +365,65 @@ impl Repo {
 
     #[instrument(skip(self), fields(fetch_commit = ?fetch_commit.id()))]
     fn merge<'r>(&'r self, remote_branch: &str, fetch_commit: AnnotatedCommit<'r>) -> Result<()> {
-        let analysis = self.inner.merge_analysis(&[&fetch_commit])?;
-        match analysis.0 {
-            MergeAnalysis::ANALYSIS_FASTFORWARD => {
-                tracing::trace!("performing a fast-forward merge");
-                let refname = format!("refs/heads/{remote_branch}");
-                match self.inner.find_reference(&refname) {
-                    Ok(mut reference) => {
-                        self.fast_forward(&mut reference, fetch_commit)?;
-                    }
-                    Err(_) => {
-                        let remote_commit_id = fetch_commit.id();
-                        self.inner.reference(
-                            &refname,
-                            remote_commit_id,
-                            true,
-                            &format!("setting {remote_branch} to {remote_commit_id}"),
-                        )?;
-                        tracing::trace!(commit_id=?remote_commit_id, "created reference to remote commit");
+        let analysis = self.inner.merge_analysis(&[&fetch_commit])?.0;
 
-                        self.inner.set_head(&refname)?;
-                        self.inner.checkout_head(Some(
-                            CheckoutBuilder::default()
-                                .allow_conflicts(true)
-                                .conflict_style_merge(true)
-                                .force(),
-                        ))?;
-                        tracing::trace!("set head to {refname}");
-                    }
+        if analysis.contains(MergeAnalysis::ANALYSIS_FASTFORWARD) {
+            tracing::trace!("performing a fast-forward merge");
+            let refname = format!("refs/heads/{remote_branch}");
+            match self.inner.find_reference(&refname) {
+                Ok(mut reference) => {
+                    self.fast_forward(&mut reference, fetch_commit)?;
+                }
+                Err(_) => {
+                    let remote_commit_id = fetch_commit.id();
+                    self.inner.reference(
+                        &refname,
+                        remote_commit_id,
+                        true,
+                        &format!("setting {remote_branch} to {remote_commit_id}"),
+                    )?;
+                    tracing::trace!(commit_id=?remote_commit_id, "created reference to remote commit");
+
+                    self.inner.set_head(&refname)?;
+                    self.inner.checkout_head(Some(
+                        CheckoutBuilder::default()
+                            .allow_conflicts(true)
+                            .conflict_style_merge(true)
+                            .force(),
+                    ))?;
+                    tracing::trace!("set head to {refname}");
                 }
             }
-            MergeAnalysis::ANALYSIS_NORMAL => {
-                tracing::trace!("performing a normal merge");
-                let head = self.inner.head()?;
-                let head_commit = self.inner.reference_to_annotated_commit(&head)?;
-                self.normal_merge(head_commit, fetch_commit)?;
-            }
-            MergeAnalysis::ANALYSIS_NONE => {
-                // FIXME: warn?
-                tracing::trace!("no merge possible");
-            }
-            MergeAnalysis::ANALYSIS_UP_TO_DATE => {
-                tracing::trace!("local branch is up-to-date, nothing to do");
-            }
-            MergeAnalysis::ANALYSIS_UNBORN => {
-                tracing::trace!("HEAD unborn, pointing HEAD to fetch commit");
-                if let Some(refname) = fetch_commit.refname() {
-                    self.inner.set_head(refname)?;
-                }
-            }
-            _ => {
-                unreachable!()
-            }
+            return Ok(());
         }
+
+        if analysis.contains(MergeAnalysis::ANALYSIS_NORMAL) {
+            tracing::trace!("performing a normal merge");
+            let head = self.inner.head()?;
+            let head_commit = self.inner.reference_to_annotated_commit(&head)?;
+            self.normal_merge(head_commit, fetch_commit)?;
+            return Ok(());
+        }
+
+        if analysis.contains(MergeAnalysis::ANALYSIS_UNBORN) {
+            tracing::trace!("HEAD unborn, pointing HEAD to fetch commit");
+            if let Some(refname) = fetch_commit.refname() {
+                self.inner.set_head(refname)?;
+            }
+            return Ok(());
+        }
+
+        if analysis.contains(MergeAnalysis::ANALYSIS_UP_TO_DATE) {
+            tracing::trace!("local branch is up-to-date, nothing to do");
+            return Ok(());
+        }
+
+        if analysis.contains(MergeAnalysis::ANALYSIS_NONE) {
+            // FIXME: warn?
+            tracing::trace!("no merge possible");
+            return Ok(());
+        }
+
         Ok(())
     }
 
