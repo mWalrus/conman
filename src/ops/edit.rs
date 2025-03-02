@@ -23,7 +23,14 @@ impl Runnable for EditOp {
         let metadata = Metadata::read(&paths.metadata)?;
 
         let maybe_file_data = match &self.path {
-            Some(path) => metadata.get_file_data_by_system_path(&path),
+            Some(path) => {
+                tracing::trace!("user specified path: {}", path.display());
+
+                let path = std::fs::canonicalize(path)?;
+                tracing::trace!("canonicalized path: {}", path.display());
+
+                metadata.get_file_data_by_system_path(&path)
+            }
             None => {
                 let theme = ColorfulTheme::default();
                 let mut fuzzy_select = FuzzySelect::with_theme(&theme)
@@ -41,6 +48,7 @@ impl Runnable for EditOp {
         };
 
         let Some(file_data) = maybe_file_data else {
+            tracing::trace!("no file data found, exiting");
             return Ok(());
         };
 
