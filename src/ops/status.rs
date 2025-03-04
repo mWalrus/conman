@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossbeam_channel::Sender;
 
-use crate::{config::Config, file::Metadata, git::Repo, paths::Paths, report};
+use crate::{config::Config, git::Repo, paths::Paths, report};
 
 use super::{Message, Runnable};
 
@@ -22,30 +22,14 @@ impl Runnable for StatusOp {
             }
         };
 
-        let metadata = Metadata::read(&paths.metadata)?;
-
-        // FIXME: this doesn't work after removing a managed file
-        //        since the file can no longer be found in the metadata.
-        // SOLUTION: display repo local relative path
-        let formatted_changes: Vec<_> = status_changes
-            .into_iter()
-            .map(|change| {
-                (
-                    change.status,
-                    metadata.get_file_data_where_repo_path_ends_with(&change.relative_path),
-                )
-            })
-            .filter(|(_, fd)| fd.is_some())
-            .collect();
-
         report!(sender, "unsaved changes:");
 
-        for (status_type, file_data) in formatted_changes.iter() {
+        for change in status_changes.iter() {
             report!(
                 sender,
                 "{}: {}",
-                status_type.to_str(),
-                file_data.unwrap().system_path.display()
+                change.status.to_str(),
+                change.relative_path.display()
             )
         }
 
