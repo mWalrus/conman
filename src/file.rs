@@ -321,6 +321,7 @@ pub fn source_was_updated(source: &PathBuf, dest: &PathBuf) -> Result<bool> {
 }
 
 pub fn canonicalize_paths(files: &Vec<PathBuf>) -> Vec<PathBuf> {
+    // FIXME: errors when canonicalizing non-existing paths
     files
         .into_iter()
         .map(|path| std::fs::canonicalize(path).unwrap())
