@@ -19,6 +19,11 @@ pub struct AddOp {
 
 impl Runnable for AddOp {
     fn run(&self, config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
+        if self.files.is_empty() {
+            report!(sender, "No file(s) specified!");
+            return Ok(());
+        }
+
         let mut metadata = Metadata::read(&paths.metadata)?;
 
         let sources = file::canonicalize_paths(&self.files);

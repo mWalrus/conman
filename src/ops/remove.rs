@@ -18,6 +18,11 @@ pub struct RemoveOp {
 
 impl Runnable for RemoveOp {
     fn run(&self, _config: Config, paths: Paths, sender: Option<Sender<Message>>) -> Result<()> {
+        if self.files.is_empty() {
+            report!(sender, "No file(s) specified!");
+            return Ok(());
+        }
+
         let mut metadata = Metadata::read(&paths.metadata)?;
 
         let files = file::canonicalize_paths(&self.files);
