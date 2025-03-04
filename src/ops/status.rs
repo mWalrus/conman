@@ -24,6 +24,9 @@ impl Runnable for StatusOp {
 
         let metadata = Metadata::read(&paths.metadata)?;
 
+        // FIXME: this doesn't work after removing a managed file
+        //        since the file can no longer be found in the metadata.
+        // SOLUTION: display repo local relative path
         let formatted_changes: Vec<_> = status_changes
             .into_iter()
             .map(|change| {
